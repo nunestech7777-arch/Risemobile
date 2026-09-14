@@ -1,0 +1,57 @@
+/* RiseMobile Official Monochromatic Atmospheric Background Styles */
+
+.rise-monochrome-bg {
+  background-color: #030407;
+}
+
+/* Broad diffuse radial lighting */
+.rise-ambient-glow-broad {
+  background: radial-gradient(
+    ellipse 65% 60% at 70% 35%,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(148, 163, 184, 0.08) 35%,
+    rgba(30, 41, 59, 0.04) 65%,
+    transparent 85%
+  );
+  filter: blur(60px);
+}
+
+/* Editorial Photographic Matte Film Grain Overlay */
+.rise-grain-overlay {
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 180px 180px;
+}
+
+/* Subtle micro-breathe motion for alive atmosphere */
+@keyframes riseAtmosphereBreathe {
+  0%, 100% {
+    transform: scale(1) translate3d(0, 0, 0);
+    opacity: 0.95;
+  }
+  50% {
+    transform: scale(1.025) translate3d(-1%, 0.5%, 0);
+    opacity: 1;
+  }
+}
+
+.rise-ambient-arc-wrapper {
+  animation: riseAtmosphereBreathe 18s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+
+/* Mobile & Tablet Optimizations */
+@media (max-width: 768px) {
+  .rise-ambient-arc-wrapper {
+    top: -5%;
+    right: -25%;
+    width: 130vw;
+    height: 90vh;
+    animation: none; /* preserve mobile CPU/GPU performance */
+  }
+  .rise-grain-overlay {
+    opacity: 0.035;
+  }
+}

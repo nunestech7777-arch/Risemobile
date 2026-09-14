@@ -1,0 +1,709 @@
+-- ============================================================================
+-- RISEMOBILE — CONSOLIDATED DATABASE SETUP (MIGRATIONS 001 A 004)
+-- Execute este script completo no SQL Editor do seu painel Supabase
+-- ============================================================================
+
+-- 1. EXTENSÃO UUID
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 2. TABELAS PRINCIPAIS
+CREATE TABLE IF NOT EXISTS public.grades (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(50) NOT NULL UNIQUE,
+    description TEXT,
+    badge_color VARCHAR(30) DEFAULT 'lavender',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.stock_entries (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    reference_code VARCHAR(100) NOT NULL,
+    model VARCHAR(100) NOT NULL,
+    storage VARCHAR(50) NOT NULL,
+    grade_id UUID REFERENCES public.grades(id) ON DELETE RESTRICT,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    total_cost_usd NUMERIC(12, 2) NOT NULL CHECK (total_cost_usd >= 0),
+    unit_cost_usd NUMERIC(12, 2) NOT NULL CHECK (unit_cost_usd >= 0),
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.devices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    external_id VARCHAR(100),
+    external_source VARCHAR(100) DEFAULT 'EXTERNAL_SYSTEM',
+    external_updated_at TIMESTAMPTZ,
+    last_synced_at TIMESTAMPTZ DEFAULT NOW(),
+    sync_status VARCHAR(50) DEFAULT 'synced',
+    model VARCHAR(100) NOT NULL,
+    storage VARCHAR(50) NOT NULL,
+    grade_id UUID NOT NULL REFERENCES public.grades(id) ON DELETE RESTRICT,
+    color VARCHAR(50) NOT NULL,
+    battery_health INTEGER NOT NULL CHECK (battery_health >= 0 AND battery_health <= 100),
+    imei VARCHAR(30) NOT NULL UNIQUE,
+    cost_price_usd NUMERIC(12, 2) NOT NULL CHECK (cost_price_usd >= 0),
+    suggested_price_usd NUMERIC(12, 2) NOT NULL CHECK (suggested_price_usd >= 0),
+    status VARCHAR(30) NOT NULL DEFAULT 'Disponível' 
+        CHECK (status IN ('Disponível', 'Reservado', 'Vendido', 'Retirado por ajuste')),
+    stock_entry_id UUID REFERENCES public.stock_entries(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_lookup ON public.devices (model, storage, grade_id, status);
+CREATE INDEX IF NOT EXISTS idx_devices_imei ON public.devices (imei);
+CREATE INDEX IF NOT EXISTS idx_devices_status ON public.devices (status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_external_id_unique ON public.devices (external_id) WHERE external_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_devices_sync_status ON public.devices (sync_status, last_synced_at);
+
+CREATE TABLE IF NOT EXISTS public.retailers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    store_name VARCHAR(200) NOT NULL,
+    contact_name VARCHAR(150) NOT NULL,
+    phone VARCHAR(30),
+    whatsapp VARCHAR(30) NOT NULL,
+    document VARCHAR(50),
+    city VARCHAR(100),
+    state VARCHAR(10),
+    address TEXT,
+    commission_per_unit_usd NUMERIC(10, 2) NOT NULL DEFAULT 0.00 CHECK (commission_per_unit_usd >= 0),
+    notes TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_retailers_store_name ON public.retailers (store_name);
+
+CREATE TABLE IF NOT EXISTS public.orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_number VARCHAR(50) NOT NULL UNIQUE,
+    retailer_id UUID NOT NULL REFERENCES public.retailers(id) ON DELETE RESTRICT,
+    status VARCHAR(30) NOT NULL DEFAULT 'Rascunho' 
+        CHECK (status IN ('Rascunho', 'Reservado', 'Em Separação', 'Finalizado', 'Cancelado')),
+    total_amount_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (total_amount_usd >= 0),
+    paid_amount_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (paid_amount_usd >= 0),
+    balance_due_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (balance_due_usd >= 0),
+    total_commission_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (total_commission_usd >= 0),
+    total_profit_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    reserved_at TIMESTAMPTZ,
+    finalized_at TIMESTAMPTZ,
+    cancelled_at TIMESTAMPTZ,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_retailer ON public.orders (retailer_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders (status);
+
+CREATE TABLE IF NOT EXISTS public.order_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    model VARCHAR(100) NOT NULL,
+    storage VARCHAR(50) NOT NULL,
+    grade_id UUID NOT NULL REFERENCES public.grades(id) ON DELETE RESTRICT,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price_usd NUMERIC(12, 2) NOT NULL CHECK (unit_price_usd >= 0),
+    total_price_usd NUMERIC(12, 2) NOT NULL CHECK (total_price_usd >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.order_device_allocations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    order_item_id UUID NOT NULL REFERENCES public.order_items(id) ON DELETE CASCADE,
+    device_id UUID NOT NULL UNIQUE REFERENCES public.devices(id) ON DELETE RESTRICT,
+    status VARCHAR(30) NOT NULL DEFAULT 'Reservado' 
+        CHECK (status IN ('Reservado', 'Separado', 'Vendido')),
+    scanned_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.payments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE RESTRICT,
+    retailer_id UUID NOT NULL REFERENCES public.retailers(id) ON DELETE RESTRICT,
+    amount_usd NUMERIC(12, 2) NOT NULL CHECK (amount_usd > 0),
+    amount_brl NUMERIC(12, 2) CHECK (amount_brl >= 0),
+    exchange_rate NUMERIC(10, 4) DEFAULT 1.0000,
+    payment_method VARCHAR(50) NOT NULL 
+        CHECK (payment_method IN ('PIX', 'Cartão', 'Dólar', 'A Prazo', 'Misto', 'Boleto', 'Transferência')),
+    payment_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.installments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    retailer_id UUID NOT NULL REFERENCES public.retailers(id) ON DELETE RESTRICT,
+    installment_number INTEGER NOT NULL CHECK (installment_number > 0),
+    amount_usd NUMERIC(12, 2) NOT NULL CHECK (amount_usd > 0),
+    due_date DATE NOT NULL,
+    payment_date TIMESTAMPTZ,
+    status VARCHAR(30) NOT NULL DEFAULT 'A vencer' 
+        CHECK (status IN ('A vencer', 'Vence hoje', 'Pago', 'Vencido')),
+    payment_id UUID REFERENCES public.payments(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_installments_status ON public.installments (status, due_date);
+
+CREATE TABLE IF NOT EXISTS public.commissions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    retailer_id UUID NOT NULL REFERENCES public.retailers(id) ON DELETE RESTRICT,
+    total_units INTEGER NOT NULL CHECK (total_units > 0),
+    rate_per_unit_usd NUMERIC(10, 2) NOT NULL CHECK (rate_per_unit_usd >= 0),
+    total_commission_usd NUMERIC(12, 2) NOT NULL CHECK (total_commission_usd >= 0),
+    status VARCHAR(30) NOT NULL DEFAULT 'Registrado',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.stock_movements (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    device_id UUID NOT NULL REFERENCES public.devices(id) ON DELETE RESTRICT,
+    order_id UUID REFERENCES public.orders(id) ON DELETE SET NULL,
+    movement_type VARCHAR(50) NOT NULL 
+        CHECK (movement_type IN ('Entrada', 'Reserva', 'Cancelamento de Reserva', 'Separação', 'Venda', 'Ajuste', 'Retorno')),
+    previous_status VARCHAR(50),
+    new_status VARCHAR(50) NOT NULL,
+    reason TEXT,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.stock_adjustments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    device_id UUID NOT NULL REFERENCES public.devices(id) ON DELETE RESTRICT,
+    reason VARCHAR(50) NOT NULL 
+        CHECK (reason IN ('Defeito', 'Garantia', 'Uso Interno', 'Descarte', 'Extravio', 'Outros')),
+    notes TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    table_name VARCHAR(100) NOT NULL,
+    record_id UUID,
+    action VARCHAR(30) NOT NULL,
+    old_data JSONB,
+    new_data JSONB,
+    performed_by VARCHAR(100) DEFAULT 'admin',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.settings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    key VARCHAR(100) NOT NULL UNIQUE,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. HABILITAR RLS
+ALTER TABLE public.grades ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.devices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.retailers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_device_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.installments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.commissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_adjustments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
+
+-- POLÍTICAS RLS PÚBLICAS/AUTENTICADAS
+DO $$ 
+DECLARE 
+    t text;
+BEGIN
+    FOR t IN 
+        SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS "Allow authenticated full access" ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Allow anon full access dev" ON public.%I', t);
+        EXECUTE format('CREATE POLICY "Allow anon full access dev" ON public.%I FOR ALL USING (true) WITH CHECK (true)', t);
+    END LOOP;
+END $$;
+
+-- 4. RPCS TRANSACIONAIS
+CREATE OR REPLACE FUNCTION public.rpc_reserve_devices_for_order(
+    p_order_id UUID,
+    p_items JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_item JSONB;
+    v_model VARCHAR;
+    v_storage VARCHAR;
+    v_grade_id UUID;
+    v_qty INTEGER;
+    v_unit_price NUMERIC;
+    v_order_item_id UUID;
+    v_device RECORD;
+    v_allocated_count INTEGER;
+    v_total_amount NUMERIC := 0;
+    v_total_commission NUMERIC := 0;
+    v_commission_rate NUMERIC := 0;
+    v_retailer_id UUID;
+    v_total_units INTEGER := 0;
+    v_result_devices JSONB := '[]'::JSONB;
+BEGIN
+    SELECT retailer_id INTO v_retailer_id FROM public.orders WHERE id = p_order_id;
+    IF v_retailer_id IS NULL THEN
+        RAISE EXCEPTION 'Pedido não encontrado: %', p_order_id;
+    END IF;
+
+    SELECT COALESCE(commission_per_unit_usd, 0) INTO v_commission_rate 
+    FROM public.retailers WHERE id = v_retailer_id;
+
+    DELETE FROM public.order_device_allocations WHERE order_id = p_order_id;
+    DELETE FROM public.order_items WHERE order_id = p_order_id;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_model := v_item->>'model';
+        v_storage := v_item->>'storage';
+        v_grade_id := (v_item->>'grade_id')::UUID;
+        v_qty := (v_item->>'quantity')::INTEGER;
+        v_unit_price := (v_item->>'unit_price')::NUMERIC;
+
+        IF v_qty <= 0 THEN
+            RAISE EXCEPTION 'Quantidade inválida para o item % %', v_model, v_storage;
+        END IF;
+
+        INSERT INTO public.order_items (order_id, model, storage, grade_id, quantity, unit_price_usd, total_price_usd)
+        VALUES (p_order_id, v_model, v_storage, v_grade_id, v_qty, v_unit_price, (v_qty * v_unit_price))
+        RETURNING id INTO v_order_item_id;
+
+        v_total_amount := v_total_amount + (v_qty * v_unit_price);
+        v_total_units := v_total_units + v_qty;
+
+        v_allocated_count := 0;
+        FOR v_device IN 
+            SELECT id, imei, battery_health, color, cost_price_usd
+            FROM public.devices
+            WHERE model = v_model 
+              AND storage = v_storage 
+              AND grade_id = v_grade_id 
+              AND status = 'Disponível'
+            ORDER BY battery_health DESC, created_at ASC
+            LIMIT v_qty
+            FOR UPDATE SKIP LOCKED
+        LOOP
+            UPDATE public.devices 
+            SET status = 'Reservado', updated_at = NOW() 
+            WHERE id = v_device.id;
+
+            INSERT INTO public.order_device_allocations (order_id, order_item_id, device_id, status)
+            VALUES (p_order_id, v_order_item_id, v_device.id, 'Reservado');
+
+            INSERT INTO public.stock_movements (device_id, order_id, movement_type, previous_status, new_status, reason)
+            VALUES (v_device.id, p_order_id, 'Reserva', 'Disponível', 'Reservado', 'Reserva automática do pedido ' || p_order_id);
+
+            v_result_devices := v_result_devices || jsonb_build_object(
+                'device_id', v_device.id,
+                'imei', v_device.imei,
+                'model', v_model,
+                'storage', v_storage,
+                'battery_health', v_device.battery_health,
+                'color', v_device.color
+            );
+
+            v_allocated_count := v_allocated_count + 1;
+        END LOOP;
+
+        IF v_allocated_count < v_qty THEN
+            RAISE EXCEPTION 'Estoque insuficiente para % % (solicitado: %, disponível: %)', 
+                v_model, v_storage, v_qty, v_allocated_count;
+        END IF;
+    END LOOP;
+
+    v_total_commission := v_total_units * v_commission_rate;
+
+    UPDATE public.orders
+    SET status = 'Reservado',
+        total_amount_usd = v_total_amount,
+        balance_due_usd = v_total_amount - paid_amount_usd,
+        total_commission_usd = v_total_commission,
+        reserved_at = NOW(),
+        updated_at = NOW()
+    WHERE id = p_order_id;
+
+    DELETE FROM public.commissions WHERE order_id = p_order_id;
+    IF v_total_commission > 0 THEN
+        INSERT INTO public.commissions (order_id, retailer_id, total_units, rate_per_unit_usd, total_commission_usd)
+        VALUES (p_order_id, v_retailer_id, v_total_units, v_commission_rate, v_total_commission);
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'total_amount_usd', v_total_amount,
+        'total_units', v_total_units,
+        'allocated_devices', v_result_devices
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.rpc_cancel_order(
+    p_order_id UUID,
+    p_reason TEXT DEFAULT 'Cancelado pelo usuário'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_alloc RECORD;
+    v_released_count INTEGER := 0;
+BEGIN
+    FOR v_alloc IN 
+        SELECT device_id FROM public.order_device_allocations WHERE order_id = p_order_id
+    LOOP
+        UPDATE public.devices 
+        SET status = 'Disponível', updated_at = NOW() 
+        WHERE id = v_alloc.device_id;
+
+        INSERT INTO public.stock_movements (device_id, order_id, movement_type, previous_status, new_status, reason)
+        VALUES (v_alloc.device_id, p_order_id, 'Cancelamento de Reserva', 'Reservado', 'Disponível', p_reason);
+
+        v_released_count := v_released_count + 1;
+    END LOOP;
+
+    DELETE FROM public.order_device_allocations WHERE order_id = p_order_id;
+
+    UPDATE public.orders
+    SET status = 'Cancelado',
+        cancelled_at = NOW(),
+        updated_at = NOW()
+    WHERE id = p_order_id;
+
+    RETURN jsonb_build_object('success', true, 'order_id', p_order_id, 'released_count', v_released_count);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.rpc_finalize_order_sale(
+    p_order_id UUID,
+    p_payments JSONB,
+    p_installments JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_order RECORD;
+    v_alloc RECORD;
+    v_payment JSONB;
+    v_installment JSONB;
+    v_total_cost NUMERIC := 0;
+    v_total_profit NUMERIC := 0;
+    v_total_paid NUMERIC := 0;
+BEGIN
+    SELECT * INTO v_order FROM public.orders WHERE id = p_order_id FOR UPDATE;
+    IF v_order IS NULL THEN
+        RAISE EXCEPTION 'Pedido % não encontrado', p_order_id;
+    END IF;
+
+    FOR v_alloc IN 
+        SELECT oda.device_id, d.cost_price_usd 
+        FROM public.order_device_allocations oda
+        JOIN public.devices d ON d.id = oda.device_id
+        WHERE oda.order_id = p_order_id
+    LOOP
+        v_total_cost := v_total_cost + v_alloc.cost_price_usd;
+
+        UPDATE public.devices 
+        SET status = 'Vendido', updated_at = NOW() 
+        WHERE id = v_alloc.device_id;
+
+        UPDATE public.order_device_allocations
+        SET status = 'Vendido'
+        WHERE order_id = p_order_id AND device_id = v_alloc.device_id;
+
+        INSERT INTO public.stock_movements (device_id, order_id, movement_type, previous_status, new_status, reason)
+        VALUES (v_alloc.device_id, p_order_id, 'Venda', 'Reservado', 'Vendido', 'Venda finalizada no pedido ' || v_order.order_number);
+    END LOOP;
+
+    IF p_payments IS NOT NULL AND jsonb_array_length(p_payments) > 0 THEN
+        FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payments)
+        LOOP
+            INSERT INTO public.payments (
+                order_id, retailer_id, amount_usd, amount_brl, exchange_rate, payment_method, notes
+            ) VALUES (
+                p_order_id, 
+                v_order.retailer_id, 
+                (v_payment->>'amount_usd')::NUMERIC,
+                COALESCE((v_payment->>'amount_brl')::NUMERIC, (v_payment->>'amount_usd')::NUMERIC * COALESCE((v_payment->>'exchange_rate')::NUMERIC, 1.0)),
+                COALESCE((v_payment->>'exchange_rate')::NUMERIC, 1.0000),
+                v_payment->>'method',
+                v_payment->>'notes'
+            );
+
+            v_total_paid := v_total_paid + (v_payment->>'amount_usd')::NUMERIC;
+        END LOOP;
+    END IF;
+
+    IF p_installments IS NOT NULL AND jsonb_array_length(p_installments) > 0 THEN
+        FOR v_installment IN SELECT * FROM jsonb_array_elements(p_installments)
+        LOOP
+            INSERT INTO public.installments (
+                order_id, retailer_id, installment_number, amount_usd, due_date, status
+            ) VALUES (
+                p_order_id,
+                v_order.retailer_id,
+                (v_installment->>'number')::INTEGER,
+                (v_installment->>'amount_usd')::NUMERIC,
+                (v_installment->>'due_date')::DATE,
+                CASE 
+                    WHEN (v_installment->>'due_date')::DATE < CURRENT_DATE THEN 'Vencido'
+                    WHEN (v_installment->>'due_date')::DATE = CURRENT_DATE THEN 'Vence hoje'
+                    ELSE 'A vencer'
+                END
+            );
+        END LOOP;
+    END IF;
+
+    v_total_profit := v_order.total_amount_usd - v_total_cost;
+
+    UPDATE public.orders
+    SET status = 'Finalizado',
+        paid_amount_usd = v_total_paid,
+        balance_due_usd = GREATEST(0, total_amount_usd - v_total_paid),
+        total_profit_usd = v_total_profit,
+        finalized_at = NOW(),
+        updated_at = NOW()
+    WHERE id = p_order_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'total_cost_usd', v_total_cost,
+        'total_profit_usd', v_total_profit,
+        'balance_due_usd', GREATEST(0, v_order.total_amount_usd - v_total_paid)
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.rpc_adjust_device_stock(
+    p_device_id UUID,
+    p_reason VARCHAR,
+    p_notes TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_prev_status VARCHAR;
+BEGIN
+    SELECT status INTO v_prev_status FROM public.devices WHERE id = p_device_id FOR UPDATE;
+    IF v_prev_status IS NULL THEN
+        RAISE EXCEPTION 'Aparelho % não encontrado', p_device_id;
+    END IF;
+
+    IF v_prev_status = 'Vendido' THEN
+        RAISE EXCEPTION 'Não é permitido retirar por ajuste um aparelho já Vendido';
+    END IF;
+
+    UPDATE public.devices
+    SET status = 'Retirado por ajuste', updated_at = NOW()
+    WHERE id = p_device_id;
+
+    INSERT INTO public.stock_adjustments (device_id, reason, notes)
+    VALUES (p_device_id, p_reason, p_notes);
+
+    INSERT INTO public.stock_movements (device_id, movement_type, previous_status, new_status, reason, notes)
+    VALUES (p_device_id, 'Ajuste', v_prev_status, 'Retirado por ajuste', p_reason, p_notes);
+
+    RETURN jsonb_build_object('success', true, 'device_id', p_device_id);
+END;
+$$;
+
+-- 5. RPC: Sincronização / UPSERT Idempotente de Aparelhos de Sistema Externo
+CREATE OR REPLACE FUNCTION public.rpc_sync_external_devices(
+    p_devices JSONB,
+    p_source VARCHAR DEFAULT 'EXTERNAL_SYSTEM'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_item JSONB;
+    v_external_id VARCHAR;
+    v_imei VARCHAR;
+    v_model VARCHAR;
+    v_storage VARCHAR;
+    v_grade_id UUID;
+    v_color VARCHAR;
+    v_battery INTEGER;
+    v_cost NUMERIC;
+    v_suggested NUMERIC;
+    v_existing_id UUID;
+    v_existing_status VARCHAR;
+    v_inserted_count INTEGER := 0;
+    v_updated_count INTEGER := 0;
+BEGIN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_devices)
+    LOOP
+        v_external_id := v_item->>'external_id';
+        v_imei := v_item->>'imei';
+        v_model := v_item->>'model';
+        v_storage := v_item->>'storage';
+        v_grade_id := (v_item->>'grade_id')::UUID;
+        v_color := COALESCE(v_item->>'color', 'Padrão');
+        v_battery := COALESCE((v_item->>'battery_health')::INTEGER, 100);
+        v_cost := COALESCE((v_item->>'cost_price_usd')::NUMERIC, 0.00);
+        v_suggested := COALESCE((v_item->>'suggested_price_usd')::NUMERIC, v_cost * 1.25);
+
+        IF v_imei IS NULL OR v_model IS NULL OR v_storage IS NULL THEN
+            CONTINUE;
+        END IF;
+
+        SELECT id, status INTO v_existing_id, v_existing_status 
+        FROM public.devices 
+        WHERE (v_external_id IS NOT NULL AND external_id = v_external_id)
+           OR imei = v_imei
+        LIMIT 1;
+
+        IF v_existing_id IS NOT NULL THEN
+            UPDATE public.devices
+            SET 
+                external_id = COALESCE(v_external_id, external_id),
+                external_source = p_source,
+                model = v_model,
+                storage = v_storage,
+                grade_id = COALESCE(v_grade_id, grade_id),
+                color = v_color,
+                battery_health = v_battery,
+                cost_price_usd = v_cost,
+                suggested_price_usd = v_suggested,
+                last_synced_at = NOW(),
+                sync_status = 'synced',
+                updated_at = NOW()
+            WHERE id = v_existing_id;
+
+            v_updated_count := v_updated_count + 1;
+        ELSE
+            INSERT INTO public.devices (
+                external_id,
+                external_source,
+                model,
+                storage,
+                grade_id,
+                color,
+                battery_health,
+                imei,
+                cost_price_usd,
+                suggested_price_usd,
+                status,
+                last_synced_at,
+                sync_status,
+                created_at,
+                updated_at
+            ) VALUES (
+                v_external_id,
+                p_source,
+                v_model,
+                v_storage,
+                v_grade_id,
+                v_color,
+                v_battery,
+                v_imei,
+                v_cost,
+                v_suggested,
+                'Disponível',
+                NOW(),
+                'synced',
+                NOW(),
+                NOW()
+            ) RETURNING id INTO v_existing_id;
+
+            INSERT INTO public.stock_movements (
+                device_id,
+                movement_type,
+                previous_status,
+                new_status,
+                reason
+            ) VALUES (
+                v_existing_id,
+                'Entrada',
+                NULL,
+                'Disponível',
+                'Sincronização com Sistema Externo (' || p_source || ')'
+            );
+
+            v_inserted_count := v_inserted_count + 1;
+        END IF;
+    END LOOP;
+
+    INSERT INTO public.audit_logs (table_name, record_id, action, new_data)
+    VALUES ('devices', NULL, 'RPC_SYNC_EXTERNAL_DEVICES', jsonb_build_object(
+        'source', p_source,
+        'inserted_count', v_inserted_count,
+        'updated_count', v_updated_count,
+        'total_processed', v_inserted_count + v_updated_count
+    ));
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'inserted_count', v_inserted_count,
+        'updated_count', v_updated_count,
+        'total_processed', v_inserted_count + v_updated_count
+    );
+END;
+$$;
+
+-- 6. SEED INICIAL DE DADOS
+INSERT INTO public.grades (id, name, description, badge_color, is_active)
+VALUES 
+    ('11111111-1111-1111-1111-111111111111', 'A++', 'Impecável, sem marcas, bateria 88%+', 'mint', true),
+    ('22222222-2222-2222-2222-222222222222', 'AB+', 'Excelente estado, micro-detalhes mínimos, bateria 85%+', 'lavender', true),
+    ('33333333-3333-3333-3333-333333333333', 'B-', 'Sinais leves de uso estético, 100% funcional', 'butter', true)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO public.retailers (id, store_name, contact_name, phone, whatsapp, document, city, state, address, commission_per_unit_usd, notes)
+VALUES 
+    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'iStore Prime SP', 'Rodrigo Mendes', '+55 11 98888-1111', '5511988881111', '28.910.456/0001-89', 'São Paulo', 'SP', 'Rua Santa Ifigênia, 450 - Sala 12', 15.00, 'Cliente VIP - Alto volume semanal'),
+    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Tech Apple Express RJ', 'Fernanda Lima', '+55 21 97777-2222', '5521977772222', '34.821.109/0001-44', 'Rio de Janeiro', 'RJ', 'Av. das Américas, 3500 - Barra', 20.00, 'Pagamentos sempre via PIX ou 50% em 15 dias'),
+    ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'Mega Imports Curitiba', 'Carlos Eduardo', '+55 41 99999-3333', '5541999993333', '19.554.321/0001-12', 'Curitiba', 'PR', 'Rua XV de Novembro, 1200', 12.00, 'Comprador frequente de lotes B- e AB+')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO public.devices (id, model, storage, grade_id, color, battery_health, imei, cost_price_usd, suggested_price_usd, status)
+VALUES 
+    ('d1111111-1111-1111-1111-111111111101', 'iPhone 13', '128GB', '11111111-1111-1111-1111-111111111111', 'Meia-noite', 96, '354890123456781', 360.00, 440.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111102', 'iPhone 13', '128GB', '11111111-1111-1111-1111-111111111111', 'Estelar', 92, '354890123456782', 360.00, 440.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111103', 'iPhone 13', '128GB', '11111111-1111-1111-1111-111111111111', 'Azul', 89, '354890123456783', 360.00, 440.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111104', 'iPhone 13', '128GB', '11111111-1111-1111-1111-111111111111', 'Rosa', 94, '354890123456784', 360.00, 440.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111105', 'iPhone 13', '128GB', '11111111-1111-1111-1111-111111111111', 'Verde', 91, '354890123456785', 360.00, 440.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111106', 'iPhone 13', '128GB', '22222222-2222-2222-2222-222222222222', 'Meia-noite', 87, '354890123456786', 330.00, 410.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111107', 'iPhone 13', '128GB', '22222222-2222-2222-2222-222222222222', 'Estelar', 86, '354890123456787', 330.00, 410.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111108', 'iPhone 14', '128GB', '11111111-1111-1111-1111-111111111111', 'Roxo', 98, '354890123456788', 460.00, 560.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111109', 'iPhone 14', '128GB', '11111111-1111-1111-1111-111111111111', 'Azul', 95, '354890123456789', 460.00, 560.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111110', 'iPhone 14', '128GB', '11111111-1111-1111-1111-111111111111', 'Estelar', 91, '354890123456790', 460.00, 560.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111111', 'iPhone 14 Pro', '256GB', '11111111-1111-1111-1111-111111111111', 'Roxo-profundo', 93, '354890123456791', 650.00, 780.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111112', 'iPhone 14 Pro', '256GB', '11111111-1111-1111-1111-111111111111', 'Preto-espacial', 90, '354890123456792', 650.00, 780.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111113', 'iPhone 15 Pro', '128GB', '11111111-1111-1111-1111-111111111111', 'Titânio Natural', 99, '354890123456793', 780.00, 920.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111114', 'iPhone 15 Pro', '128GB', '11111111-1111-1111-1111-111111111111', 'Titânio Azul', 97, '354890123456794', 780.00, 920.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111115', 'iPhone 15 Pro', '128GB', '11111111-1111-1111-1111-111111111111', 'Titânio Preto', 95, '354890123456795', 780.00, 920.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111116', 'iPhone 15 Pro Max', '256GB', '11111111-1111-1111-1111-111111111111', 'Titânio Natural', 100, '354890123456796', 920.00, 1090.00, 'Disponível'),
+    ('d1111111-1111-1111-1111-111111111117', 'iPhone 15 Pro Max', '256GB', '11111111-1111-1111-1111-111111111111', 'Titânio Branco', 98, '354890123456797', 920.00, 1090.00, 'Disponível')
+ON CONFLICT (imei) DO NOTHING;
+
+INSERT INTO public.settings (key, value)
+VALUES 
+    ('system_config', '{"app_name": "RiseMobile", "base_currency": "USD", "usd_to_brl_rate": 5.48, "company_name": "RiseMobile Wholesale Ltd."}')
+ON CONFLICT (key) DO NOTHING;
