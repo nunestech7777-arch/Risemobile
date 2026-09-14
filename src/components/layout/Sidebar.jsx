@@ -8,8 +8,7 @@ import {
   Receipt, 
   TrendingUp, 
   Award,
-  BarChart3, 
-  Settings, 
+  BarChart3,
   LogOut,
   ChevronLeft
 } from 'lucide-react';
@@ -26,7 +25,6 @@ export const NAV_ITEMS = [
   { id: 'commissions', label: 'Comissões', icon: Award },
   { id: 'profit', label: 'Faturamento', icon: TrendingUp },
   { id: 'reports', label: 'Relatórios & Exportação', icon: BarChart3 },
-  { id: 'settings', label: 'Configurações', icon: Settings },
 ];
 
 export const Sidebar = ({ activeTab, onSelectTab, isMobile = false, onCloseMobile, onLogout }) => {

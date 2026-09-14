@@ -14,7 +14,6 @@ import { PaymentsModule } from './components/payments/PaymentsModule';
 import { CommissionsModule } from './components/commissions/CommissionsModule';
 import { ProfitModule } from './components/profit/ProfitModule';
 import { ReportsModule } from './components/reports/ReportsModule';
-import { SettingsModule } from './components/settings/SettingsModule';
 import { ShaderBackground } from './components/ui/adisyon-shader';
 
 import { DataService, AuthService } from './lib/supabaseClient';
@@ -258,11 +257,6 @@ export function App() {
     await loadAllData();
   };
 
-  const handleResetDemoData = async () => {
-    DataService.resetToDemoData();
-    await loadAllData();
-  };
-
   // Título da página atual
   const pageTitles = {
     dashboard: { title: 'Visão Geral', subtitle: 'Painel executivo de atacado de iPhones' },
@@ -275,7 +269,6 @@ export function App() {
     commissions: { title: 'Comissões', subtitle: 'Comissão única oficial por indicação de lojista' },
     profit: { title: 'Faturamento', subtitle: 'Acompanhe o faturamento realizado e o potencial de vendas da operação' },
     reports: { title: 'Relatórios & Exportação', subtitle: 'Exportação em Excel (.xlsx) e CSV' },
-    settings: { title: 'Configurações', subtitle: 'Cotação cambial, Supabase e parâmetros' },
   };
 
   // Alertas pendentes
@@ -464,16 +457,6 @@ export function App() {
               retailers={retailers}
               installments={installments}
               grades={grades}
-            />
-          )}
-
-          {activeTab === 'settings' && (
-            <SettingsModule
-              settings={settings}
-              exchangeRate={exchangeRate}
-              onUpdateExchangeRate={setExchangeRate}
-              onSaveSettings={(st) => DataService.saveSettings(st)}
-              onResetDemoData={handleResetDemoData}
             />
           )}
         </div>
