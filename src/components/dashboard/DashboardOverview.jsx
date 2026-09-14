@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
-import { 
-  ArrowUpRight, 
-  ArrowDownRight, 
-  Plus, 
+import {
+  Plus,
   ChevronRight,
 } from 'lucide-react';
 import { Card } from '../ui/Card';
@@ -36,17 +34,7 @@ export const DashboardOverview = ({
   
   const totalReceivablesUSD = installments.filter(i => i.status !== 'Pago').reduce((sum, i) => sum + (i.amount_usd || 0), 0);
   const overdueInstallments = installments.filter(i => i.status === 'Vencido');
-
-  // Gráfico de linha SVG idêntico ao estilo da referência visual
-  const chartPoints = [
-    { label: 'Seg', val: 3200 },
-    { label: 'Ter', val: 5100 },
-    { label: 'Qua', val: 4800 },
-    { label: 'Qui', val: 7900 },
-    { label: 'Sex', val: 9200 },
-    { label: 'Sáb', val: 12400 },
-    { label: 'Dom', val: 17643.41 },
-  ];
+  const profitMarginPct = totalRevenueUSD > 0 ? (totalProfitUSD / totalRevenueUSD) * 100 : 0;
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
@@ -60,12 +48,10 @@ export const DashboardOverview = ({
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Faturamento & Vendas</span>
                 <div className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mt-1">
-                  {formatUSD(totalRevenueUSD || 17643.41)}
+                  {formatUSD(totalRevenueUSD)}
                 </div>
                 <div className="flex items-center gap-2 mt-1 text-xs font-bold text-slate-800 dark:text-slate-200">
-                  <ArrowUpRight className="w-3.5 h-3.5 text-slate-900 dark:text-emerald-400" />
-                  <span className="text-slate-900 dark:text-emerald-400">+18.4% este mês</span>
-                  <span className="text-slate-500 dark:text-slate-300 font-normal">• Lucro: {formatUSD(totalProfitUSD || 4820.00)}</span>
+                  <span className="text-slate-500 dark:text-slate-300 font-normal">Lucro: {formatUSD(totalProfitUSD)}</span>
                 </div>
               </div>
 
@@ -148,7 +134,7 @@ export const DashboardOverview = ({
             {/* Float Tooltip Badge on Chart */}
             <div className="absolute right-12 top-2 bg-[#111418] dark:bg-[#0D121D]/90 dark:backdrop-blur-md text-white text-[11px] font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 border border-slate-700 dark:border-white/20 dark:shadow-[0_4px_16px_rgba(0,0,0,0.5)]">
               <span className="w-1.5 h-1.5 rounded-full bg-white dark:bg-slate-200 animate-pulse"></span>
-              <span>{formatUSD(totalRevenueUSD || 17643.41)}</span>
+              <span>{formatUSD(totalRevenueUSD)}</span>
             </div>
           </div>
         </Card>
@@ -173,8 +159,7 @@ export const DashboardOverview = ({
             title="Lucro Líquido"
             subtitle="Margem de atacado"
             value={formatUSD(totalProfitUSD)}
-            secondaryValue={`Margem média: 18.5%`}
-            badgeText="+14.2%"
+            secondaryValue={`Margem média: ${profitMarginPct.toFixed(1)}%`}
             badgeType="neutral"
             onOptionsClick={() => onNavigate('commissions')}
           />

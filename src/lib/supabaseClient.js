@@ -60,10 +60,26 @@ const setStored = (key, val) => {
   }
 };
 
-// Initialize default storage if empty
+const CLEAN_VERSION_KEY = 'risemobile_clean_v1_active';
+
+// Initialize default storage if empty or migrate from legacy mock data
 export const initStorageIfNeeded = () => {
   try {
     if (typeof localStorage !== 'undefined') {
+      const isClean = localStorage.getItem(CLEAN_VERSION_KEY) === 'true';
+      if (!isClean) {
+        // Limpa dados fictícios legados para inicialização 100% limpa com dados reais
+        localStorage.removeItem(STORAGE_KEYS.RETAILERS);
+        localStorage.removeItem(STORAGE_KEYS.DEVICES);
+        localStorage.removeItem(STORAGE_KEYS.ORDERS);
+        localStorage.removeItem(STORAGE_KEYS.INSTALLMENTS);
+        localStorage.removeItem(STORAGE_KEYS.MOVEMENTS);
+        localStorage.removeItem(STORAGE_KEYS.ADJUSTMENTS);
+        localStorage.removeItem(STORAGE_KEYS.AUDIT_LOGS);
+        localStorage.removeItem(STORAGE_KEYS.RETAILER_REFERRALS);
+        localStorage.setItem(CLEAN_VERSION_KEY, 'true');
+      }
+
       if (!localStorage.getItem(STORAGE_KEYS.GRADES)) setStored(STORAGE_KEYS.GRADES, INITIAL_GRADES);
       if (!localStorage.getItem(STORAGE_KEYS.RETAILERS)) setStored(STORAGE_KEYS.RETAILERS, INITIAL_RETAILERS);
       if (!localStorage.getItem(STORAGE_KEYS.DEVICES)) setStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
@@ -733,17 +749,24 @@ export const DataService = {
     return settings;
   },
 
-  // Resetar / Re-seed dados de teste
-  resetToDemoData() {
-    setStored(STORAGE_KEYS.GRADES, INITIAL_GRADES);
-    setStored(STORAGE_KEYS.RETAILERS, INITIAL_RETAILERS);
-    setStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
-    setStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
-    setStored(STORAGE_KEYS.INSTALLMENTS, INITIAL_INSTALLMENTS);
-    setStored(STORAGE_KEYS.MOVEMENTS, INITIAL_MOVEMENTS);
-    setStored(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+  // Limpar todos os dados operacionais (Estoque, Vendas, Clientes, Parcelas, Movimentações)
+  clearAllOperationalData() {
+    setStored(STORAGE_KEYS.RETAILERS, []);
+    setStored(STORAGE_KEYS.DEVICES, []);
+    setStored(STORAGE_KEYS.ORDERS, []);
+    setStored(STORAGE_KEYS.INSTALLMENTS, []);
+    setStored(STORAGE_KEYS.MOVEMENTS, []);
     setStored(STORAGE_KEYS.ADJUSTMENTS, []);
-    setStored(STORAGE_KEYS.RETAILER_REFERRALS, INITIAL_RETAILER_REFERRALS);
+    setStored(STORAGE_KEYS.AUDIT_LOGS, []);
+    setStored(STORAGE_KEYS.RETAILER_REFERRALS, []);
+    return { success: true };
+  },
+
+  // Resetar para base 100% limpa para produção
+  resetToDemoData() {
+    this.clearAllOperationalData();
+    setStored(STORAGE_KEYS.GRADES, INITIAL_GRADES);
+    setStored(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
   }
 };
 

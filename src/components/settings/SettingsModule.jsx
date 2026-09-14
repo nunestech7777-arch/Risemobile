@@ -134,10 +134,10 @@ export const SettingsModule = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h4 className="text-sm font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
-                  <RotateCcw className="w-4 h-4" /> Restaurar Base de Demonstração (MVP)
+                  <RotateCcw className="w-4 h-4" /> Zerar Dados / Iniciar com Dados Reais
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-300 mt-0.5">
-                  Recarrega todos os aparelhos, lojistas, grades e pedidos iniciais para testes de homologação.
+                  Limpa todos os aparelhos, lojistas, pedidos, parcelas e movimentações para iniciar a operação com dados 100% reais.
                 </p>
               </div>
               <Button
@@ -146,13 +146,13 @@ export const SettingsModule = ({
                 className="text-rose-600 border-rose-300 hover:bg-rose-50"
                 type="button"
                 onClick={() => {
-                  if (window.confirm('Deseja restaurar todos os dados para o estado inicial de demonstração?')) {
+                  if (window.confirm('Atenção: Deseja zerar todos os dados operacionais (estoque, vendas, clientes e parcelas) para iniciar a operação real?')) {
                     onResetDemoData();
-                    alert('Dados restaurados com sucesso!');
+                    alert('Base de dados zerada com sucesso! Pronto para cadastrar seus dados reais.');
                   }
                 }}
               >
-                Resetar Dados
+                Zerar Base de Dados
               </Button>
             </div>
           </Card>
