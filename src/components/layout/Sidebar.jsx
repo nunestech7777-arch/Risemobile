@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { 
   LayoutGrid, 
   Smartphone, 
+  PackagePlus,
   Users, 
   ShoppingBag, 
   ScanLine, 
@@ -18,6 +19,7 @@ import { RiseMobileLogo } from '../common/RiseMobileLogo';
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
   { id: 'stock', label: 'Estoque', icon: Smartphone },
+  { id: 'stock_entry', label: 'Entrada de Estoque', icon: PackagePlus },
   { id: 'sales', label: 'Vendas', icon: ShoppingBag },
   { id: 'retailers', label: 'Lojistas', icon: Users },
   { id: 'separation', label: 'Separação & Conferência', icon: ScanLine },

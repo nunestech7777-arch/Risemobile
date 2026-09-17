@@ -236,14 +236,20 @@ END $$;
 
 -- 4. RPCS TRANSACIONAIS
 CREATE OR REPLACE FUNCTION public.rpc_reserve_devices_for_order(
-    p_order_id UUID,
-    p_items JSONB
+    p_order_id UUID DEFAULT NULL,
+    p_retailer_id UUID DEFAULT NULL,
+    p_items JSONB DEFAULT '[]'::JSONB,
+    p_notes TEXT DEFAULT '',
+    p_order_number VARCHAR DEFAULT NULL
 )
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
+    v_order_id UUID := p_order_id;
+    v_retailer_id UUID := p_retailer_id;
     v_item JSONB;
     v_model VARCHAR;
     v_storage VARCHAR;
@@ -256,102 +262,178 @@ DECLARE
     v_total_amount NUMERIC := 0;
     v_total_commission NUMERIC := 0;
     v_commission_rate NUMERIC := 0;
-    v_retailer_id UUID;
     v_total_units INTEGER := 0;
     v_result_devices JSONB := '[]'::JSONB;
+    v_order_num VARCHAR := p_order_number;
 BEGIN
-    SELECT retailer_id INTO v_retailer_id FROM public.orders WHERE id = p_order_id;
-    IF v_retailer_id IS NULL THEN
-        RAISE EXCEPTION 'Pedido não encontrado: %', p_order_id;
+    -- Se p_order_id for informado, busca o lojista do pedido existente
+    IF v_order_id IS NOT NULL THEN
+        SELECT retailer_id INTO v_retailer_id FROM public.orders WHERE id = v_order_id;
+        IF v_retailer_id IS NULL THEN
+            RAISE EXCEPTION 'Pedido com ID % não encontrado.', v_order_id;
+        END IF;
+    ELSE
+        -- Se p_order_id for nulo, p_retailer_id deve ser fornecido para criar o pedido
+        IF v_retailer_id IS NULL THEN
+            RAISE EXCEPTION 'ID do lojista ou ID do pedido deve ser fornecido.';
+        END IF;
     END IF;
 
+    -- Obter taxa de comissão por unidade do lojista
     SELECT COALESCE(commission_per_unit_usd, 0) INTO v_commission_rate 
     FROM public.retailers WHERE id = v_retailer_id;
 
-    DELETE FROM public.order_device_allocations WHERE order_id = p_order_id;
-    DELETE FROM public.order_items WHERE order_id = p_order_id;
+    -- Calcular totais primeiro para criar o pedido com valores corretos se for novo
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_qty := COALESCE((v_item->>'quantity')::INTEGER, 1);
+        v_unit_price := COALESCE((v_item->>'unit_price_usd')::NUMERIC, (v_item->>'unit_price')::NUMERIC, 0);
+        v_total_amount := v_total_amount + (v_qty * v_unit_price);
+        v_total_units := v_total_units + v_qty;
+    END LOOP;
 
+    v_total_commission := v_total_units * v_commission_rate;
+
+    -- Se for um novo pedido, cria em public.orders
+    IF v_order_id IS NULL THEN
+        IF v_order_num IS NULL OR v_order_num = '' THEN
+            v_order_num := 'PED-' || TO_CHAR(NOW(), 'YYYY') || '-' || LPAD(FLOOR(RANDOM() * 9000 + 1000)::TEXT, 4, '0');
+        END IF;
+
+        INSERT INTO public.orders (
+            order_number,
+            retailer_id,
+            status,
+            total_amount_usd,
+            paid_amount_usd,
+            balance_due_usd,
+            total_commission_usd,
+            total_profit_usd,
+            notes,
+            reserved_at
+        ) VALUES (
+            v_order_num,
+            v_retailer_id,
+            'Reservado',
+            v_total_amount,
+            0,
+            v_total_amount,
+            v_total_commission,
+            0,
+            p_notes,
+            NOW()
+        )
+        RETURNING id INTO v_order_id;
+    ELSE
+        -- Limpar itens e alocações anteriores caso seja uma re-reserva de pedido existente
+        DELETE FROM public.order_device_allocations WHERE order_id = v_order_id;
+        DELETE FROM public.order_items WHERE order_id = v_order_id;
+        
+        UPDATE public.orders 
+        SET total_amount_usd = v_total_amount,
+            balance_due_usd = v_total_amount - paid_amount_usd,
+            total_commission_usd = v_total_commission,
+            status = 'Reservado',
+            updated_at = NOW()
+        WHERE id = v_order_id;
+    END IF;
+
+    -- Iterar sobre os itens e alocar aparelhos disponíveis por maior bateria
     FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
     LOOP
         v_model := v_item->>'model';
         v_storage := v_item->>'storage';
-        v_grade_id := (v_item->>'grade_id')::UUID;
-        v_qty := (v_item->>'quantity')::INTEGER;
-        v_unit_price := (v_item->>'unit_price')::NUMERIC;
+        v_grade_id := NULL;
+        IF (v_item->>'grade_id') IS NOT NULL AND (v_item->>'grade_id') <> '' THEN
+            v_grade_id := (v_item->>'grade_id')::UUID;
+        END IF;
+        v_qty := COALESCE((v_item->>'quantity')::INTEGER, 1);
+        v_unit_price := COALESCE((v_item->>'unit_price_usd')::NUMERIC, (v_item->>'unit_price')::NUMERIC, 0);
 
         IF v_qty <= 0 THEN
-            RAISE EXCEPTION 'Quantidade inválida para o item % %', v_model, v_storage;
+            RAISE EXCEPTION 'Quantidade inválida (%) para o item % %', v_qty, v_model, v_storage;
         END IF;
 
-        INSERT INTO public.order_items (order_id, model, storage, grade_id, quantity, unit_price_usd, total_price_usd)
-        VALUES (p_order_id, v_model, v_storage, v_grade_id, v_qty, v_unit_price, (v_qty * v_unit_price))
+        -- Inserir item do pedido
+        INSERT INTO public.order_items (
+            order_id, model, storage, grade_id, quantity, unit_price_usd, total_price_usd
+        ) VALUES (
+            v_order_id, v_model, v_storage, v_grade_id, v_qty, v_unit_price, (v_qty * v_unit_price)
+        )
         RETURNING id INTO v_order_item_id;
 
-        v_total_amount := v_total_amount + (v_qty * v_unit_price);
-        v_total_units := v_total_units + v_qty;
-
+        -- Selecionar aparelhos disponíveis ordenados por maior saúde de bateria com lock pessimista
         v_allocated_count := 0;
         FOR v_device IN 
             SELECT id, imei, battery_health, color, cost_price_usd
             FROM public.devices
             WHERE model = v_model 
               AND storage = v_storage 
-              AND grade_id = v_grade_id 
+              AND (v_grade_id IS NULL OR grade_id = v_grade_id)
               AND status = 'Disponível'
-            ORDER BY battery_health DESC, created_at ASC
+            ORDER BY battery_health DESC NULLS LAST, created_at ASC
             LIMIT v_qty
             FOR UPDATE SKIP LOCKED
         LOOP
+            -- 1. Alocar aparelho ao pedido
+            INSERT INTO public.order_device_allocations (order_id, order_item_id, device_id, status)
+            VALUES (v_order_id, v_order_item_id, v_device.id, 'Reservado');
+
+            -- 2. Atualizar status do dispositivo para Reservado
             UPDATE public.devices 
             SET status = 'Reservado', updated_at = NOW() 
             WHERE id = v_device.id;
 
-            INSERT INTO public.order_device_allocations (order_id, order_item_id, device_id, status)
-            VALUES (p_order_id, v_order_item_id, v_device.id, 'Reservado');
-
-            INSERT INTO public.stock_movements (device_id, order_id, movement_type, previous_status, new_status, reason)
-            VALUES (v_device.id, p_order_id, 'Reserva', 'Disponível', 'Reservado', 'Reserva automática do pedido ' || p_order_id);
+            -- 3. Registrar movimentação de estoque
+            INSERT INTO public.stock_movements (
+                device_id, order_id, movement_type, previous_status, new_status, reason
+            ) VALUES (
+                v_device.id, v_order_id, 'Reserva', 'Disponível', 'Reservado', 'Reserva automática para pedido ' || v_order_num
+            );
 
             v_result_devices := v_result_devices || jsonb_build_object(
                 'device_id', v_device.id,
                 'imei', v_device.imei,
                 'model', v_model,
                 'storage', v_storage,
+                'color', v_device.color,
                 'battery_health', v_device.battery_health,
-                'color', v_device.color
+                'cost_price_usd', v_device.cost_price_usd,
+                'separated', false
             );
 
             v_allocated_count := v_allocated_count + 1;
         END LOOP;
 
         IF v_allocated_count < v_qty THEN
-            RAISE EXCEPTION 'Estoque insuficiente para % % (solicitado: %, disponível: %)', 
+            RAISE EXCEPTION 'Estoque insuficiente para o modelo % % (solicitados: %, disponíveis: %)', 
                 v_model, v_storage, v_qty, v_allocated_count;
         END IF;
     END LOOP;
 
-    v_total_commission := v_total_units * v_commission_rate;
-
-    UPDATE public.orders
-    SET status = 'Reservado',
-        total_amount_usd = v_total_amount,
-        balance_due_usd = v_total_amount - paid_amount_usd,
-        total_commission_usd = v_total_commission,
-        reserved_at = NOW(),
-        updated_at = NOW()
-    WHERE id = p_order_id;
-
-    DELETE FROM public.commissions WHERE order_id = p_order_id;
-    IF v_total_commission > 0 THEN
-        INSERT INTO public.commissions (order_id, retailer_id, total_units, rate_per_unit_usd, total_commission_usd)
-        VALUES (p_order_id, v_retailer_id, v_total_units, v_commission_rate, v_total_commission);
-    END IF;
+    -- Registrar log de auditoria
+    INSERT INTO public.audit_logs (table_name, record_id, action, new_data, performed_by)
+    VALUES (
+        'orders', 
+        v_order_id, 
+        'RESERVE_ORDER', 
+        jsonb_build_object(
+            'order_id', v_order_id, 
+            'total_amount', v_total_amount, 
+            'allocated_devices', v_result_devices
+        ),
+        'system'
+    );
 
     RETURN jsonb_build_object(
-        'success', true,
-        'order_id', p_order_id,
+        'id', v_order_id,
+        'order_id', v_order_id,
+        'order_number', v_order_num,
+        'retailer_id', v_retailer_id,
+        'status', 'Reservado',
         'total_amount_usd', v_total_amount,
         'total_units', v_total_units,
+        'total_commission_usd', v_total_commission,
         'allocated_devices', v_result_devices
     );
 END;
@@ -667,7 +749,196 @@ BEGIN
 END;
 $$;
 
--- 6. SEED INICIAL DE DADOS
+-- 6. Função RPC para Entrada Manual de Lote Atômica (RiseMobile Native Entry)
+CREATE OR REPLACE FUNCTION public.rpc_create_stock_entry_batch(
+    p_reference_code VARCHAR,
+    p_model VARCHAR,
+    p_storage VARCHAR,
+    p_grade_id UUID,
+    p_quantity INTEGER,
+    p_unit_cost_usd NUMERIC,
+    p_suggested_price_usd NUMERIC,
+    p_notes TEXT,
+    p_created_by VARCHAR,
+    p_source VARCHAR,
+    p_units JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_stock_entry_id UUID;
+    v_total_cost NUMERIC := 0;
+    v_unit JSONB;
+    v_imei VARCHAR;
+    v_color VARCHAR;
+    v_battery INTEGER;
+    v_cost NUMERIC;
+    v_price NUMERIC;
+    v_inserted_device_id UUID;
+    v_devices_created JSONB := '[]'::JSONB;
+    v_actual_count INTEGER := 0;
+    v_existing_id UUID;
+BEGIN
+    IF p_quantity <= 0 THEN
+        RAISE EXCEPTION 'A quantidade do lote deve ser maior que zero.';
+    END IF;
+
+    IF jsonb_array_length(p_units) <> p_quantity THEN
+        RAISE EXCEPTION 'A quantidade de unidades no array (%) não corresponde à quantidade informada no lote (%).', 
+            jsonb_array_length(p_units), p_quantity;
+    END IF;
+
+    FOR v_unit IN SELECT * FROM jsonb_array_elements(p_units)
+    LOOP
+        v_imei := TRIM(v_unit->>'imei');
+        IF v_imei IS NULL OR v_imei = '' THEN
+            RAISE EXCEPTION 'Todas as unidades devem possuir um IMEI ou Serial válido.';
+        END IF;
+
+        SELECT id INTO v_existing_id FROM public.devices WHERE imei = v_imei LIMIT 1;
+        IF v_existing_id IS NOT NULL THEN
+            RAISE EXCEPTION 'O IMEI % já está cadastrado no sistema (Conflito com ID: %).', v_imei, v_existing_id;
+        END IF;
+
+        v_cost := COALESCE((v_unit->>'cost_price_usd')::NUMERIC, p_unit_cost_usd);
+        v_total_cost := v_total_cost + v_cost;
+    END LOOP;
+
+    INSERT INTO public.stock_entries (
+        reference_code,
+        model,
+        storage,
+        grade_id,
+        quantity,
+        total_cost_usd,
+        unit_cost_usd,
+        suggested_price_usd,
+        notes,
+        created_by,
+        source,
+        created_at
+    ) VALUES (
+        p_reference_code,
+        p_model,
+        p_storage,
+        p_grade_id,
+        p_quantity,
+        v_total_cost,
+        p_unit_cost_usd,
+        p_suggested_price_usd,
+        p_notes,
+        COALESCE(p_created_by, 'admin'),
+        COALESCE(p_source, 'manual'),
+        NOW()
+    ) RETURNING id INTO v_stock_entry_id;
+
+    FOR v_unit IN SELECT * FROM jsonb_array_elements(p_units)
+    LOOP
+        v_imei := TRIM(v_unit->>'imei');
+        v_color := COALESCE(v_unit->>'color', 'Padrão');
+        v_battery := COALESCE((v_unit->>'battery_health')::INTEGER, 100);
+        v_cost := COALESCE((v_unit->>'cost_price_usd')::NUMERIC, p_unit_cost_usd);
+        v_price := COALESCE((v_unit->>'suggested_price_usd')::NUMERIC, p_suggested_price_usd);
+
+        INSERT INTO public.devices (
+            model,
+            storage,
+            grade_id,
+            color,
+            battery_health,
+            imei,
+            cost_price_usd,
+            suggested_price_usd,
+            status,
+            stock_entry_id,
+            source,
+            created_at,
+            updated_at
+        ) VALUES (
+            p_model,
+            p_storage,
+            p_grade_id,
+            v_color,
+            v_battery,
+            v_imei,
+            v_cost,
+            v_price,
+            'Disponível',
+            v_stock_entry_id,
+            COALESCE(p_source, 'manual'),
+            NOW(),
+            NOW()
+        ) RETURNING id INTO v_inserted_device_id;
+
+        INSERT INTO public.stock_movements (
+            device_id,
+            movement_type,
+            previous_status,
+            new_status,
+            reason,
+            notes,
+            created_at
+        ) VALUES (
+            v_inserted_device_id,
+            'Entrada',
+            NULL,
+            'Disponível',
+            'Entrada de Estoque (Lote: ' || p_reference_code || ')',
+            'Entrada registrada por ' || COALESCE(p_created_by, 'admin'),
+            NOW()
+        );
+
+        v_devices_created := v_devices_created || jsonb_build_object(
+            'id', v_inserted_device_id,
+            'imei', v_imei,
+            'model', p_model,
+            'storage', p_storage,
+            'color', v_color,
+            'battery_health', v_battery,
+            'cost_price_usd', v_cost,
+            'suggested_price_usd', v_price
+        );
+
+        v_actual_count := v_actual_count + 1;
+    END LOOP;
+
+    INSERT INTO public.audit_logs (
+        table_name,
+        record_id,
+        action,
+        new_data,
+        performed_by,
+        created_at
+    ) VALUES (
+        'stock_entries',
+        v_stock_entry_id,
+        'RPC_CREATE_STOCK_ENTRY_BATCH',
+        jsonb_build_object(
+            'stock_entry_id', v_stock_entry_id,
+            'reference_code', p_reference_code,
+            'quantity', p_quantity,
+            'total_cost_usd', v_total_cost,
+            'source', COALESCE(p_source, 'manual'),
+            'devices_created', v_devices_created
+        ),
+        COALESCE(p_created_by, 'admin'),
+        NOW()
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'stock_entry_id', v_stock_entry_id,
+        'reference_code', p_reference_code,
+        'quantity', v_actual_count,
+        'total_cost_usd', v_total_cost,
+        'devices', v_devices_created
+    );
+END;
+$$;
+
+-- 7. SEED INICIAL DE DADOS
 INSERT INTO public.grades (id, name, description, badge_color, is_active)
 VALUES 
     ('11111111-1111-1111-1111-111111111111', 'A++', 'Impecável, sem marcas, bateria 88%+', 'mint', true),
@@ -707,3 +978,12 @@ INSERT INTO public.settings (key, value)
 VALUES 
     ('system_config', '{"app_name": "RiseMobile", "base_currency": "USD", "usd_to_brl_rate": 5.48, "company_name": "RiseMobile Wholesale Ltd."}')
 ON CONFLICT (key) DO NOTHING;
+
+-- PERMISSÕES DE EXECUÇÃO DE RPCS
+GRANT EXECUTE ON FUNCTION public.rpc_reserve_devices_for_order(UUID, UUID, JSONB, TEXT, VARCHAR) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.rpc_cancel_order(UUID, TEXT) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.rpc_finalize_order_sale(UUID, JSONB, JSONB) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.rpc_adjust_device_stock(UUID, VARCHAR, TEXT) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.rpc_create_stock_entry_batch(VARCHAR, VARCHAR, VARCHAR, UUID, INTEGER, NUMERIC, NUMERIC, TEXT, VARCHAR, VARCHAR, JSONB) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.rpc_sync_external_devices(JSONB, VARCHAR, VARCHAR) TO authenticated, anon, service_role;
+

@@ -7,6 +7,7 @@ import { RiseMobileLogo } from './components/common/RiseMobileLogo';
 
 import { DashboardOverview } from './components/dashboard/DashboardOverview';
 import { StockManagement } from './components/stock/StockManagement';
+import { StockEntryModule } from './components/stock/StockEntryModule';
 import { RetailersModule } from './components/retailers/RetailersModule';
 import { SalesModule } from './components/sales/SalesModule';
 import { SeparationModule } from './components/separation/SeparationModule';
@@ -257,10 +258,23 @@ export function App() {
     await loadAllData();
   };
 
+  const handleConfirmStockEntry = async (batchConfig, unitsList) => {
+    const res = await DataService.createStockEntryBatch(batchConfig, unitsList, user?.email || 'admin');
+    await loadAllData();
+    return res;
+  };
+
+  const handleConfirmStockImport = async (validRows, batchCode) => {
+    const res = await DataService.importDevicesBatch(validRows, user?.email || 'admin', batchCode);
+    await loadAllData();
+    return res;
+  };
+
   // Título da página atual
   const pageTitles = {
     dashboard: { title: 'Visão Geral', subtitle: 'Painel executivo de atacado de iPhones' },
     stock: { title: 'Estoque', subtitle: 'Visão consolidada e consulta por IMEI' },
+    stock_entry: { title: 'Entrada & Importação', subtitle: 'Cadastro manual em lote e importação por planilha' },
     sales: { title: 'Vendas', subtitle: 'Seleção automática de modelos, reserva e finalização comercial' },
     orders: { title: 'Vendas', subtitle: 'Seleção automática de modelos, reserva e finalização comercial' },
     retailers: { title: 'Lojistas', subtitle: 'Gestão de parceiros comerciais e histórico' },
@@ -387,6 +401,16 @@ export function App() {
               movements={movements}
               onNavigate={handleNavigate}
               onSaveGrade={handleSaveGrade}
+            />
+          )}
+
+          {activeTab === 'stock_entry' && (
+            <StockEntryModule
+              grades={grades}
+              devices={devices}
+              onConfirmEntry={handleConfirmStockEntry}
+              onConfirmImport={handleConfirmStockImport}
+              onNavigate={handleNavigate}
             />
           )}
 

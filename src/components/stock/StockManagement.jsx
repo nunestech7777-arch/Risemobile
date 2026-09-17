@@ -4,6 +4,7 @@ import {
   Search, 
   Download, 
   Plus,
+  PackagePlus,
   History, 
   Edit2
 } from 'lucide-react';
@@ -178,6 +179,16 @@ export const StockManagement = ({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5">
+          {onNavigate && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => onNavigate('stock_entry')}
+              icon={PackagePlus}
+            >
+              Nova Entrada de Estoque
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -195,7 +206,7 @@ export const StockManagement = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">Estoque Agrupado por Configuração</h3>
-              <p className="text-xs text-slate-400">Visão operacional dos aparelhos sincronizados</p>
+              <p className="text-xs text-slate-400">Visão operacional dos aparelhos disponíveis e reservados</p>
             </div>
             
             {/* Filter by Model */}
@@ -210,8 +221,10 @@ export const StockManagement = ({
 
           {groupedStock.length === 0 ? (
             <EmptyState
-              title="Nenhum modelo sincronizado no estoque"
-              description="Os aparelhos aparecerão automaticamente após a sincronização com o sistema externo."
+              title="Nenhum aparelho cadastrado no estoque"
+              description="Cadastre novos aparelhos através da Entrada de Estoque manual em lote ou importação Excel/CSV."
+              actionText={onNavigate ? "Fazer Entrada de Estoque" : undefined}
+              onAction={onNavigate ? () => onNavigate('stock_entry') : undefined}
             />
           ) : (
             <Table headers={['Modelo & Armazenamento', 'Grade', 'Preço', 'Disponíveis', 'Reservados', 'Total', 'Ações']}>

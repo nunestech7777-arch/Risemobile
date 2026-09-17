@@ -11,7 +11,8 @@ import {
   Clock, 
   ExternalLink,
   Edit2,
-  TrendingUp
+  TrendingUp,
+  AlertCircle
 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -19,6 +20,7 @@ import { Badge } from '../ui/Badge';
 import { Input, CurrencyInput } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { Modal, Drawer } from '../ui/Modal';
+import { EmptyState } from '../ui/EmptyState';
 import { formatUSD, formatDate, getStatusBadge } from '../../lib/formatters';
 
 export const RetailersModule = ({
@@ -31,6 +33,8 @@ export const RetailersModule = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRetailer, setSelectedRetailer] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
 
   // Form State
   const [formData, setFormData] = useState({
@@ -67,6 +71,7 @@ export const RetailersModule = ({
       address: '',
       notes: ''
     });
+    setFormError('');
     setIsModalOpen(true);
   };
 
@@ -75,20 +80,30 @@ export const RetailersModule = ({
     setFormData({
       ...retailer
     });
+    setFormError('');
     setIsModalOpen(true);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.store_name.trim() || !formData.whatsapp.trim()) {
-      alert('Preencha o Nome da Loja e o WhatsApp.');
+      setFormError('Preencha o Nome da Loja e o WhatsApp.');
       return;
     }
 
-    onSaveRetailer({
-      ...formData
-    });
-    setIsModalOpen(false);
+    setIsSubmitting(true);
+    setFormError('');
+
+    try {
+      await onSaveRetailer({
+        ...formData
+      });
+      setIsModalOpen(false);
+    } catch (err) {
+      setFormError(err.message || 'Erro ao salvar lojista.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Cálculos de perfil do lojista selecionado
@@ -107,7 +122,7 @@ export const RetailersModule = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Lojistas & Clientes Atacadistas</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-300">Gestão de limites, comissões por peça e histórico de pedidos</p>
+          <p className="text-xs text-slate-500 dark:text-slate-300">Gestão de parceiros comerciais, contatos e histórico de compras</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -123,9 +138,17 @@ export const RetailersModule = ({
         </div>
       </div>
 
-      {/* Retailers Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredRetailers.map((r) => {
+      {/* Retailers Cards Grid / Empty State */}
+      {filteredRetailers.length === 0 ? (
+        <EmptyState
+          title="Nenhum lojista cadastrado"
+          description="Cadastre seus parceiros comerciais e lojistas atacadistas para gerenciar vendas e pedidos."
+          actionText="Cadastrar Primeiro Lojista"
+          onAction={handleOpenCreate}
+        />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {filteredRetailers.map((r) => {
           const rOrders = orders.filter(o => o.retailer_id === r.id);
           const rBought = rOrders.reduce((sum, o) => sum + (o.total_amount_usd || 0), 0);
           const rPaid = rOrders.reduce((sum, o) => sum + (o.paid_amount_usd || 0), 0);
@@ -182,7 +205,8 @@ export const RetailersModule = ({
             </Card>
           );
         })}
-      </div>
+        </div>
+      )}
 
       {/* 360° Retailer Profile Drawer */}
       {selectedRetailer && (
@@ -312,12 +336,19 @@ export const RetailersModule = ({
             placeholder="Condições de pagamento combinadas, preferências..."
           />
 
+          {formError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
+
           <div className="flex justify-end gap-3 pt-4">
-            <Button variant="outline" size="sm" type="button" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" size="sm" type="button" onClick={() => setIsModalOpen(false)} disabled={isSubmitting}>
               Cancelar
             </Button>
-            <Button variant="primary" size="sm" type="submit">
-              Salvar Lojista
+            <Button variant="primary" size="sm" type="submit" disabled={isSubmitting}>
+              {isSubmitting ? 'Salvando...' : 'Salvar Lojista'}
             </Button>
           </div>
         </form>

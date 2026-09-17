@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ShoppingBag, 
   Plus, 
@@ -54,6 +54,13 @@ export const SalesModule = ({
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newSaleRetailerId, setNewSaleRetailerId] = useState('');
   const [saleNotes, setSaleNotes] = useState('');
+
+  // Auto-selecionar o primeiro lojista quando a lista de lojistas for carregada
+  useEffect(() => {
+    if ((!newSaleRetailerId || newSaleRetailerId === '') && retailers && retailers.length > 0) {
+      setNewSaleRetailerId(retailers[0].id);
+    }
+  }, [retailers, newSaleRetailerId]);
 
   // Item atual sendo configurado para adicionar
   const [currentItem, setCurrentItem] = useState({
@@ -266,8 +273,9 @@ export const SalesModule = ({
 
   // Submissão da Nova Venda
   const handleConfirmSale = async (proceedToPayment = false) => {
-    if (!newSaleRetailerId) {
-      setErrorMessage('Por favor, selecione um lojista parceiro.');
+    const effectiveRetailerId = newSaleRetailerId || (retailers && retailers.length > 0 ? retailers[0].id : null);
+    if (!effectiveRetailerId) {
+      setErrorMessage('Por favor, cadastre e selecione um lojista parceiro antes de prosseguir.');
       return;
     }
     if (saleItems.length === 0) {
@@ -280,7 +288,7 @@ export const SalesModule = ({
 
     try {
       const orderPayload = {
-        retailer_id: newSaleRetailerId,
+        retailer_id: effectiveRetailerId,
         notes: saleNotes
       };
 
@@ -611,7 +619,7 @@ export const SalesModule = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-slate-200 dark:border-slate-800">
             <Select
               label="Lojista Parceiro"
-              value={newSaleRetailerId}
+              value={newSaleRetailerId || (retailers && retailers.length > 0 ? retailers[0].id : '')}
               onChange={(e) => setNewSaleRetailerId(e.target.value)}
               options={retailers.map(r => ({ value: r.id, label: `${r.store_name} (${r.contact_name})` }))}
               required
