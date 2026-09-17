@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  Smartphone, 
   Search, 
   Download, 
   Plus,
@@ -231,16 +230,11 @@ export const StockManagement = ({
               {groupedStock.map((group) => (
                 <TableRow key={group.key}>
                   <TableCell>
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                        <Smartphone className="w-4 h-4 text-slate-700 dark:text-slate-300 stroke-[1.8]" />
-                      </div>
-                      <div>
-                        <span className="font-extrabold text-slate-900 dark:text-white">{group.model}</span>
-                        <span className="ml-2 px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                          {group.storage}
-                        </span>
-                      </div>
+                    <div className="flex items-center">
+                      <span className="font-extrabold text-slate-900 dark:text-white">{group.model}</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                        {group.storage}
+                      </span>
                     </div>
                   </TableCell>
                   <TableCell>

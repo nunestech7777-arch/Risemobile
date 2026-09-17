@@ -114,6 +114,49 @@ initStorageIfNeeded();
    REPOSITÓRIO & CAMADA DE SERVIÇOS (SUPABASE + LOCAL STORAGE RPC ENGINE)
    ========================================================================= */
 
+// Normaliza um pedido vindo do Supabase (joins) para o formato usado pelo frontend.
+// allocated_devices representa somente aparelhos ATIVOS na venda (exclui devolvidos),
+// para que toda a lógica existente de faturamento/comissão baseada em
+// allocated_devices.length continue correta automaticamente após uma devolução.
+const normalizeOrderFromSupabase = (o) => {
+  const allocations = o.order_device_allocations || [];
+  const toDeviceShape = (a) => ({
+    device_id: a.device_id,
+    imei: a.devices?.imei,
+    model: a.devices?.model,
+    storage: a.devices?.storage,
+    grade_id: a.devices?.grade_id,
+    color: a.devices?.color,
+    battery_health: a.devices?.battery_health,
+    cost_price_usd: a.devices?.cost_price_usd,
+    separated: a.status === 'Separado' || a.status === 'Vendido'
+  });
+
+  return {
+    ...o,
+    retailer_name: o.retailer_name || o.retailers?.store_name || 'Lojista',
+    items: o.order_items || [],
+    allocated_devices: allocations.filter(a => a.status !== 'Devolvido').map(toDeviceShape),
+    returned_devices: allocations.filter(a => a.status === 'Devolvido').map(toDeviceShape),
+    returns: (o.sale_returns || []).map(r => ({
+      id: r.id,
+      reason: r.reason,
+      notes: r.notes,
+      created_at: r.created_at,
+      created_by: r.created_by,
+      total_amount_usd: r.total_amount_usd,
+      total_commission_usd: r.total_commission_usd,
+      items: (r.sale_return_items || []).map(ri => ({
+        device_id: ri.device_id,
+        imei: ri.imei,
+        model: ri.model,
+        storage: ri.storage,
+        original_sale_price_usd: ri.original_sale_price_usd
+      }))
+    }))
+  };
+};
+
 export const DataService = {
   // Grades
   async getGrades() {
@@ -397,6 +440,267 @@ export const DataService = {
       count: newDevices.length,
       devices_count: newDevices.length,
       total_cost_usd: totalCost
+    };
+  },
+
+  // Entrada de Lote com Múltiplos Itens/Modelos: 1 lote -> N itens -> N devices
+  // header: { reference_code, notes }
+  // items: [{ model, storage, grade_id, unit_cost_usd, suggested_price_usd, units: [{imei, color, battery_health, cost_price_usd, suggested_price_usd}] }]
+  async createStockEntryBatchMulti(header, items, userResponsavel = 'admin') {
+    if (!items || items.length === 0) {
+      throw new Error('O lote precisa conter ao menos um item/configuração.');
+    }
+
+    // 1. Validação estrita de duplicidade de IMEIs entre TODOS os itens do lote
+    const seenImeisInBatch = new Set();
+    for (const item of items) {
+      if (!item.units || item.units.length === 0) {
+        throw new Error(`O item ${item.model} ${item.storage} não possui unidades.`);
+      }
+      for (const unit of item.units) {
+        const imei = (unit.imei || '').trim();
+        if (!imei) {
+          throw new Error('Todas as unidades devem possuir um IMEI ou Serial preenchido.');
+        }
+        if (seenImeisInBatch.has(imei)) {
+          throw new Error(`IMEI duplicado entre itens/configurações do mesmo lote: ${imei}`);
+        }
+        seenImeisInBatch.add(imei);
+      }
+    }
+
+    if (isLiveSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.rpc('rpc_create_stock_entry_batch_multi', {
+          p_reference_code: header.reference_code,
+          p_notes: header.notes || '',
+          p_created_by: userResponsavel,
+          p_source: 'manual',
+          p_items: items
+        });
+        if (!error && data) return data;
+
+        const isFnMissing = error && (
+          error.message?.includes('Could not find the function') ||
+          error.code === '42883' ||
+          error.code === 'PGRST202'
+        );
+        if (!isFnMissing) {
+          throw new Error(error.message);
+        }
+      } catch (rpcErr) {
+        if (!rpcErr.message?.includes('Could not find the function') && !rpcErr.message?.includes('schema cache')) {
+          throw rpcErr;
+        }
+      }
+
+      // Fluxo Direto Supabase (fallback caso a RPC ainda não tenha sido aplicada)
+      const allImeis = items.flatMap(it => it.units.map(u => u.imei.trim()));
+      const { data: existingInDb } = await supabase.from('devices').select('imei').in('imei', allImeis);
+      if (existingInDb && existingInDb.length > 0) {
+        throw new Error(`O IMEI ${existingInDb[0].imei} já está cadastrado no sistema.`);
+      }
+
+      let grandTotalCost = 0;
+      let grandTotalQty = 0;
+
+      const { data: entryData, error: entryErr } = await supabase.from('stock_entries').insert({
+        reference_code: header.reference_code,
+        quantity: 1,
+        total_cost_usd: 0,
+        notes: header.notes || '',
+        created_by: userResponsavel,
+        source: 'manual'
+      }).select().single();
+      if (entryErr) throw new Error(`Erro ao criar lote: ${entryErr.message}`);
+      const stockEntryId = entryData.id;
+
+      const itemsResult = [];
+
+      for (const item of items) {
+        const unitCost = parseFloat(item.unit_cost_usd) || 0;
+        const suggestedPrice = parseFloat(item.suggested_price_usd) || 0;
+
+        const { data: itemData, error: itemErr } = await supabase.from('stock_entry_items').insert({
+          stock_entry_id: stockEntryId,
+          model: item.model,
+          storage: item.storage,
+          grade_id: item.grade_id,
+          quantity: item.units.length,
+          unit_cost_usd: unitCost,
+          suggested_price_usd: suggestedPrice,
+          total_cost_usd: 0
+        }).select().single();
+        if (itemErr) throw new Error(`Erro ao criar item do lote (${item.model} ${item.storage}): ${itemErr.message}`);
+        const itemId = itemData.id;
+
+        const devicesToInsert = item.units.map(u => ({
+          model: item.model,
+          storage: item.storage,
+          grade_id: item.grade_id,
+          color: u.color || 'Padrão',
+          battery_health: parseInt(u.battery_health, 10) || 100,
+          imei: u.imei.trim(),
+          cost_price_usd: parseFloat(u.cost_price_usd !== undefined ? u.cost_price_usd : unitCost) || 0,
+          suggested_price_usd: parseFloat(u.suggested_price_usd !== undefined ? u.suggested_price_usd : suggestedPrice) || 0,
+          status: 'Disponível',
+          stock_entry_id: stockEntryId,
+          stock_entry_item_id: itemId,
+          source: 'manual'
+        }));
+
+        const { data: insertedDevices, error: devErr } = await supabase.from('devices').insert(devicesToInsert).select();
+        if (devErr) throw new Error(`Erro ao cadastrar aparelhos de ${item.model} ${item.storage}: ${devErr.message}`);
+
+        const itemTotalCost = (insertedDevices || []).reduce((s, d) => s + (parseFloat(d.cost_price_usd) || 0), 0);
+        await supabase.from('stock_entry_items').update({ total_cost_usd: itemTotalCost }).eq('id', itemId);
+
+        if (insertedDevices && insertedDevices.length > 0) {
+          const movementsToInsert = insertedDevices.map(d => ({
+            device_id: d.id,
+            movement_type: 'Entrada',
+            previous_status: null,
+            new_status: 'Disponível',
+            reason: `Entrada de Estoque (Lote: ${header.reference_code} — ${item.model} ${item.storage})`,
+            notes: `Entrada registrada por ${userResponsavel}`
+          }));
+          await supabase.from('stock_movements').insert(movementsToInsert);
+        }
+
+        grandTotalCost += itemTotalCost;
+        grandTotalQty += insertedDevices?.length || 0;
+        itemsResult.push({
+          item_id: itemId,
+          model: item.model,
+          storage: item.storage,
+          grade_id: item.grade_id,
+          quantity: insertedDevices?.length || 0,
+          total_cost_usd: itemTotalCost,
+          devices: insertedDevices || []
+        });
+      }
+
+      await supabase.from('stock_entries').update({ quantity: grandTotalQty, total_cost_usd: grandTotalCost }).eq('id', stockEntryId);
+
+      return {
+        success: true,
+        stock_entry_id: stockEntryId,
+        reference_code: header.reference_code,
+        total_items: items.length,
+        total_quantity: grandTotalQty,
+        total_cost_usd: grandTotalCost,
+        items: itemsResult
+      };
+    }
+
+    // Engine Local RPC Transacional Atômica (Fallback Offline / LocalStorage)
+    const existingDevices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
+    const existingImeis = new Set(existingDevices.map(d => (d.imei || '').trim()));
+
+    for (const imei of seenImeisInBatch) {
+      if (existingImeis.has(imei)) {
+        throw new Error(`O IMEI ${imei} já está cadastrado no sistema.`);
+      }
+    }
+
+    const stockEntryId = `entry-${Date.now()}`;
+    const timestamp = new Date().toISOString();
+    let grandTotalCost = 0;
+    let grandTotalQty = 0;
+
+    const newDevices = [];
+    const newMovements = [];
+    const itemsResult = [];
+
+    for (const item of items) {
+      const itemId = `entry-item-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      const unitCost = parseFloat(item.unit_cost_usd) || 0;
+      const suggestedPrice = parseFloat(item.suggested_price_usd) || 0;
+      let itemTotalCost = 0;
+      const itemDevices = [];
+
+      for (let i = 0; i < item.units.length; i++) {
+        const u = item.units[i];
+        const cost = parseFloat(u.cost_price_usd !== undefined ? u.cost_price_usd : unitCost) || 0;
+        const price = parseFloat(u.suggested_price_usd !== undefined ? u.suggested_price_usd : suggestedPrice) || (cost * 1.25);
+        itemTotalCost += cost;
+
+        const deviceId = `dev-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`;
+        const newDev = {
+          id: deviceId,
+          model: item.model,
+          storage: item.storage,
+          grade_id: item.grade_id,
+          color: u.color || 'Padrão',
+          battery_health: parseInt(u.battery_health, 10) || 100,
+          imei: u.imei.trim(),
+          cost_price_usd: cost,
+          suggested_price_usd: price,
+          status: 'Disponível',
+          stock_entry_id: stockEntryId,
+          stock_entry_item_id: itemId,
+          source: 'manual',
+          created_at: timestamp,
+          updated_at: timestamp
+        };
+
+        newDevices.push(newDev);
+        itemDevices.push(newDev);
+        newMovements.push({
+          id: `mov-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`,
+          device_id: deviceId,
+          imei: newDev.imei,
+          movement_type: 'Entrada',
+          previous_status: null,
+          new_status: 'Disponível',
+          reason: `Entrada de Estoque (Lote: ${header.reference_code} — ${item.model} ${item.storage})`,
+          notes: `Entrada registrada por ${userResponsavel}`,
+          created_at: timestamp
+        });
+      }
+
+      grandTotalCost += itemTotalCost;
+      grandTotalQty += item.units.length;
+      itemsResult.push({
+        item_id: itemId,
+        model: item.model,
+        storage: item.storage,
+        grade_id: item.grade_id,
+        quantity: item.units.length,
+        unit_cost_usd: unitCost,
+        suggested_price_usd: suggestedPrice,
+        total_cost_usd: itemTotalCost,
+        devices: itemDevices
+      });
+    }
+
+    const newEntry = {
+      id: stockEntryId,
+      reference_code: header.reference_code,
+      quantity: grandTotalQty,
+      total_cost_usd: grandTotalCost,
+      notes: header.notes || '',
+      created_by: userResponsavel,
+      source: 'manual',
+      created_at: timestamp,
+      items: itemsResult
+    };
+
+    const stockEntries = getStored(STORAGE_KEYS.STOCK_ENTRIES, []);
+    setStored(STORAGE_KEYS.STOCK_ENTRIES, [newEntry, ...stockEntries]);
+    setStored(STORAGE_KEYS.DEVICES, [...newDevices, ...existingDevices]);
+
+    const movements = getStored(STORAGE_KEYS.MOVEMENTS, INITIAL_MOVEMENTS);
+    setStored(STORAGE_KEYS.MOVEMENTS, [...newMovements, ...movements]);
+
+    return {
+      success: true,
+      stock_entry_id: stockEntryId,
+      reference_code: header.reference_code,
+      total_items: items.length,
+      total_quantity: grandTotalQty,
+      total_cost_usd: grandTotalCost,
+      items: itemsResult
     };
   },
 
@@ -746,11 +1050,55 @@ export const DataService = {
     return payload.id ? payload : updated[0];
   },
 
+  async deleteRetailer(id) {
+    if (!id) throw new Error('ID do lojista não informado.');
+
+    if (isLiveSupabaseConfigured) {
+      // Verificar se existem pedidos vinculados ao lojista
+      const { data: linkedOrders } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('retailer_id', id)
+        .limit(1);
+
+      if (linkedOrders && linkedOrders.length > 0) {
+        throw new Error('Não é possível excluir este lojista porque existem pedidos/vendas registrados para ele. Para desativar, remova ou cancele os pedidos associados primeiro.');
+      }
+
+      const { error } = await supabase.from('retailers').delete().eq('id', id);
+      if (error) {
+        console.error('Erro ao excluir lojista no Supabase:', error);
+        throw new Error(`Erro ao excluir lojista: ${error.message}`);
+      }
+      return { success: true };
+    }
+
+    const orders = getStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
+    const hasOrders = orders.some(o => o.retailer_id === id);
+    if (hasOrders) {
+      throw new Error('Não é possível excluir este lojista porque existem pedidos/vendas registrados para ele.');
+    }
+
+    const retailers = getStored(STORAGE_KEYS.RETAILERS, INITIAL_RETAILERS);
+    const updated = retailers.filter(r => r.id !== id);
+    setStored(STORAGE_KEYS.RETAILERS, updated);
+    return { success: true };
+  },
+
   // Pedidos
   async getOrders() {
     if (isLiveSupabaseConfigured) {
-      const { data, error } = await supabase.from('orders').select('*, retailers(store_name, contact_name), order_items(*)').order('created_at', { ascending: false });
-      if (!error && data) return data;
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          retailers(store_name, contact_name),
+          order_items(*),
+          order_device_allocations(status, device_id, devices(id, imei, model, storage, grade_id, color, battery_health, cost_price_usd)),
+          sale_returns(id, reason, notes, created_at, created_by, total_amount_usd, total_commission_usd, sale_return_items(device_id, imei, model, storage, original_sale_price_usd))
+        `)
+        .order('created_at', { ascending: false });
+      if (!error && data) return data.map(normalizeOrderFromSupabase);
     }
     return getStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
   },
@@ -811,6 +1159,7 @@ export const DataService = {
             imei: dev.imei,
             model: dev.model,
             storage: dev.storage,
+            grade_id: dev.grade_id,
             color: dev.color,
             battery_health: dev.battery_health,
             cost_price_usd: dev.cost_price_usd,
@@ -937,6 +1286,7 @@ export const DataService = {
           imei: dev.imei,
           model: dev.model,
           storage: dev.storage,
+          grade_id: dev.grade_id,
           color: dev.color,
           battery_health: dev.battery_health,
           cost_price_usd: dev.cost_price_usd,
@@ -1076,6 +1426,91 @@ export const DataService = {
     return { success: true };
   },
 
+  // Exclusão de Venda (qualquer status): restaura automaticamente ao estoque
+  // qualquer aparelho ainda vinculado (Reservado/Separado/Vendido) e remove
+  // o pedido e seus registros filhos (pagamentos, parcelas, devoluções).
+  async deleteOrder(orderId) {
+    if (isLiveSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.rpc('rpc_delete_order', { p_order_id: orderId });
+        if (!error && data) return data;
+
+        const isFnMissing = error && (
+          error.message?.includes('Could not find the function') ||
+          error.code === '42883' ||
+          error.code === 'PGRST202'
+        );
+        if (!isFnMissing) {
+          throw new Error(error.message);
+        }
+      } catch (rpcErr) {
+        if (!rpcErr.message?.includes('Could not find the function') && !rpcErr.message?.includes('schema cache')) {
+          throw rpcErr;
+        }
+      }
+
+      // Fluxo Direto Supabase (fallback caso a RPC ainda não tenha sido aplicada)
+      const { data: order } = await supabase.from('orders').select('*').eq('id', orderId).single();
+      if (!order) throw new Error('Pedido não encontrado');
+
+      const { data: allocs } = await supabase.from('order_device_allocations').select('device_id, status').eq('order_id', orderId);
+      const toRestore = (allocs || []).filter(a => a.status !== 'Devolvido').map(a => a.device_id);
+
+      if (toRestore.length > 0) {
+        await supabase.from('devices').update({ status: 'Disponível', updated_at: new Date().toISOString() }).in('id', toRestore);
+
+        const movementsToInsert = toRestore.map(deviceId => ({
+          device_id: deviceId,
+          order_id: orderId,
+          movement_type: 'Cancelamento de Reserva',
+          previous_status: 'Vendido',
+          new_status: 'Disponível',
+          reason: `Venda ${order.order_number} excluída pelo administrador`
+        }));
+        await supabase.from('stock_movements').insert(movementsToInsert);
+      }
+
+      await supabase.from('sale_return_items').delete().eq('order_id', orderId);
+      await supabase.from('sale_returns').delete().eq('order_id', orderId);
+      await supabase.from('payments').delete().eq('order_id', orderId);
+      await supabase.from('orders').delete().eq('id', orderId);
+
+      return { success: true, order_id: orderId, restored_devices: toRestore.length };
+    }
+
+    // Engine Local (LocalStorage)
+    const orders = getStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
+    const order = orders.find(o => o.id === orderId);
+    if (!order) throw new Error('Pedido não encontrado');
+
+    const devices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
+    const toRestoreIds = new Set((order.allocated_devices || []).map(d => d.device_id));
+
+    const updatedDevices = devices.map(d => (toRestoreIds.has(d.id) ? { ...d, status: 'Disponível', updated_at: new Date().toISOString() } : d));
+    setStored(STORAGE_KEYS.DEVICES, updatedDevices);
+
+    const movements = getStored(STORAGE_KEYS.MOVEMENTS, INITIAL_MOVEMENTS);
+    const newMovements = (order.allocated_devices || []).map(d => ({
+      id: `mov-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      device_id: d.device_id,
+      imei: d.imei,
+      order_id: orderId,
+      movement_type: 'Cancelamento de Reserva',
+      previous_status: 'Vendido',
+      new_status: 'Disponível',
+      reason: `Venda ${order.order_number} excluída pelo administrador`,
+      created_at: new Date().toISOString()
+    }));
+    setStored(STORAGE_KEYS.MOVEMENTS, [...newMovements, ...movements]);
+
+    setStored(STORAGE_KEYS.ORDERS, orders.filter(o => o.id !== orderId));
+
+    const installments = getStored(STORAGE_KEYS.INSTALLMENTS, INITIAL_INSTALLMENTS);
+    setStored(STORAGE_KEYS.INSTALLMENTS, installments.filter(i => i.order_id !== orderId));
+
+    return { success: true, order_id: orderId, restored_devices: toRestoreIds.size };
+  },
+
   // Separação / Conferência de Aparelhos (Bipe de IMEI)
   async markDeviceAsSeparated(orderId, deviceId) {
     if (isLiveSupabaseConfigured) {
@@ -1131,6 +1566,12 @@ export const DataService = {
         .single();
 
       if (!order) throw new Error('Pedido não encontrado');
+      if (order.status === 'Finalizado' || order.status === 'Parcialmente Devolvida' || order.status === 'Totalmente Devolvida') {
+        throw new Error(`Pedido ${order.order_number} já foi finalizado anteriormente.`);
+      }
+      if (order.status === 'Cancelado') {
+        throw new Error(`Pedido ${order.order_number} está cancelado e não pode ser finalizado.`);
+      }
 
       const deviceIds = (order.order_device_allocations || []).map(a => a.device_id);
       let totalCost = 0;
@@ -1204,6 +1645,12 @@ export const DataService = {
     const orders = getStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
     const order = orders.find(o => o.id === orderId);
     if (!order) throw new Error('Pedido não encontrado');
+    if (order.status === 'Finalizado' || order.status === 'Parcialmente Devolvida' || order.status === 'Totalmente Devolvida') {
+      throw new Error(`Pedido ${order.order_number} já foi finalizado anteriormente.`);
+    }
+    if (order.status === 'Cancelado') {
+      throw new Error(`Pedido ${order.order_number} está cancelado e não pode ser finalizado.`);
+    }
 
     const devices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
     const allocatedMap = new Map((order.allocated_devices || []).map(d => [d.device_id, d]));
@@ -1274,6 +1721,345 @@ export const DataService = {
       total_profit_usd: totalProfit,
       total_cost_usd: totalCost,
       balance_due_usd: balanceDue
+    };
+  },
+
+  // RPC: Devolução de Aparelho(s) de uma Venda Finalizada (não é cancelamento)
+  async registerSaleReturn(orderId, deviceIds, reason, notes = '', createdBy = 'admin') {
+    if (!deviceIds || deviceIds.length === 0) {
+      throw new Error('Selecione ao menos um aparelho para devolução.');
+    }
+
+    if (isLiveSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.rpc('rpc_register_sale_return', {
+          p_order_id: orderId,
+          p_device_ids: deviceIds,
+          p_reason: reason,
+          p_notes: notes || '',
+          p_created_by: createdBy
+        });
+        if (!error && data) return data;
+
+        const isFnMissing = error && (
+          error.message?.includes('Could not find the function') ||
+          error.code === '42883' ||
+          error.code === 'PGRST202'
+        );
+        if (!isFnMissing) {
+          throw new Error(error.message);
+        }
+      } catch (rpcErr) {
+        if (!rpcErr.message?.includes('Could not find the function') && !rpcErr.message?.includes('schema cache')) {
+          throw rpcErr;
+        }
+      }
+
+      // Fluxo Direto Supabase (fallback caso a RPC ainda não tenha sido aplicada)
+      const { data: order } = await supabase.from('orders').select('*').eq('id', orderId).single();
+      if (!order) throw new Error('Pedido não encontrado');
+      if (order.status !== 'Finalizado' && order.status !== 'Parcialmente Devolvida') {
+        throw new Error(`Somente vendas Finalizadas ou Parcialmente Devolvidas podem receber devolução (status atual: ${order.status})`);
+      }
+
+      const { data: retailer } = await supabase.from('retailers').select('*').eq('id', order.retailer_id).single();
+      const { data: orderItems } = await supabase.from('order_items').select('*').eq('order_id', orderId);
+      const { data: allocations } = await supabase
+        .from('order_device_allocations')
+        .select('*, devices(*)')
+        .eq('order_id', orderId)
+        .in('device_id', deviceIds);
+
+      if (!allocations || allocations.length !== deviceIds.length) {
+        throw new Error('Um ou mais aparelhos não pertencem a este pedido.');
+      }
+
+      // Denominador estável para o preço médio de fallback: total de aparelhos JÁ alocados
+      // ao pedido (ativos + devolvidos), que nunca muda — nunca a contagem atual, que
+      // encolhe a cada devolução e infla o preço médio em devoluções sucessivas.
+      const { count: totalEverAllocated } = await supabase
+        .from('order_device_allocations')
+        .select('*', { count: 'exact', head: true })
+        .eq('order_id', orderId);
+
+      let totalReturned = 0;
+      let totalCostReturned = 0;
+      const returnItemsToInsert = [];
+
+      for (const alloc of allocations) {
+        if (alloc.status === 'Devolvido') {
+          throw new Error(`Aparelho ${alloc.devices?.imei} já foi devolvido anteriormente.`);
+        }
+        if (alloc.status !== 'Vendido') {
+          throw new Error(`Aparelho ${alloc.devices?.imei} não está Vendido e não pode ser devolvido.`);
+        }
+
+        const matchingItem = (orderItems || []).find(it =>
+          it.model === alloc.devices?.model && it.storage === alloc.devices?.storage && it.grade_id === alloc.devices?.grade_id
+        );
+        const unitPrice = matchingItem
+          ? parseFloat(matchingItem.unit_price_usd)
+          : (parseFloat(order.total_amount_usd) || 0) / Math.max(1, totalEverAllocated || deviceIds.length);
+
+        totalReturned += unitPrice;
+        totalCostReturned += parseFloat(alloc.devices?.cost_price_usd) || 0;
+
+        returnItemsToInsert.push({
+          device_id: alloc.device_id,
+          imei: alloc.devices?.imei,
+          model: alloc.devices?.model,
+          storage: alloc.devices?.storage,
+          original_sale_price_usd: unitPrice
+        });
+      }
+
+      const totalCommissionReturned = allocations.length * (parseFloat(retailer?.commission_per_unit_usd) || 0);
+
+      const { data: createdReturn, error: returnErr } = await supabase.from('sale_returns').insert({
+        order_id: orderId,
+        retailer_id: order.retailer_id,
+        reason,
+        notes: notes || '',
+        total_amount_usd: totalReturned,
+        total_commission_usd: totalCommissionReturned,
+        created_by: createdBy
+      }).select().single();
+      if (returnErr) throw new Error(`Erro ao registrar devolução: ${returnErr.message}`);
+
+      await supabase.from('sale_return_items').insert(
+        returnItemsToInsert.map(it => ({ ...it, return_id: createdReturn.id, order_id: orderId }))
+      );
+
+      await supabase.from('order_device_allocations').update({ status: 'Devolvido' }).eq('order_id', orderId).in('device_id', deviceIds);
+      await supabase.from('devices').update({ status: 'Disponível', updated_at: new Date().toISOString() }).in('id', deviceIds);
+
+      const movementsToInsert = allocations.map(alloc => ({
+        device_id: alloc.device_id,
+        order_id: orderId,
+        movement_type: 'Retorno',
+        previous_status: 'Vendido',
+        new_status: 'Disponível',
+        reason: `Devolução de Venda (Pedido ${order.order_number})`,
+        notes: `Motivo: ${reason}${notes ? ' — ' + notes : ''}`
+      }));
+      await supabase.from('stock_movements').insert(movementsToInsert);
+
+      const newReturnedAmount = (parseFloat(order.returned_amount_usd) || 0) + totalReturned;
+      const newReturnedCommission = (parseFloat(order.returned_commission_usd) || 0) + totalCommissionReturned;
+      const netTotal = Math.max(0, (parseFloat(order.total_amount_usd) || 0) - newReturnedAmount);
+      const newBalanceDue = Math.max(0, netTotal - (parseFloat(order.paid_amount_usd) || 0));
+      const newCreditDue = Math.max(0, (parseFloat(order.paid_amount_usd) || 0) - netTotal);
+      const newProfit = (parseFloat(order.total_profit_usd) || 0) - (totalReturned - totalCostReturned);
+
+      const { data: openInstallments } = await supabase
+        .from('installments')
+        .select('*')
+        .eq('order_id', orderId)
+        .neq('status', 'Pago')
+        .order('due_date', { ascending: false });
+
+      const openSum = (openInstallments || []).reduce((s, i) => s + (parseFloat(i.amount_usd) || 0), 0);
+      if (openSum > newBalanceDue) {
+        let excess = openSum - newBalanceDue;
+        for (const inst of (openInstallments || [])) {
+          if (excess <= 0) break;
+          const amount = parseFloat(inst.amount_usd) || 0;
+          const reduction = Math.min(excess, amount);
+          if (reduction >= amount) {
+            await supabase.from('installments').update({
+              status: 'Pago',
+              amount_usd: 0,
+              notes: `${inst.notes || ''} [Cancelada por devolução]`.trim()
+            }).eq('id', inst.id);
+          } else {
+            await supabase.from('installments').update({ amount_usd: amount - reduction }).eq('id', inst.id);
+          }
+          excess -= reduction;
+        }
+      }
+
+      const { count: totalAllocated } = await supabase.from('order_device_allocations').select('*', { count: 'exact', head: true }).eq('order_id', orderId);
+      const { count: totalReturnedAlloc } = await supabase.from('order_device_allocations').select('*', { count: 'exact', head: true }).eq('order_id', orderId).eq('status', 'Devolvido');
+      const newStatus = totalReturnedAlloc >= totalAllocated ? 'Totalmente Devolvida' : 'Parcialmente Devolvida';
+
+      await supabase.from('orders').update({
+        returned_amount_usd: newReturnedAmount,
+        returned_commission_usd: newReturnedCommission,
+        total_profit_usd: newProfit,
+        balance_due_usd: newBalanceDue,
+        credit_due_usd: newCreditDue,
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      }).eq('id', orderId);
+
+      return {
+        success: true,
+        return_id: createdReturn.id,
+        order_id: orderId,
+        order_status: newStatus,
+        returned_amount_usd: totalReturned,
+        returned_commission_usd: totalCommissionReturned,
+        net_total_usd: netTotal,
+        balance_due_usd: newBalanceDue,
+        credit_due_usd: newCreditDue
+      };
+    }
+
+    // Engine Local RPC Transacional (Fallback Offline / LocalStorage)
+    const orders = getStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
+    const order = orders.find(o => o.id === orderId);
+    if (!order) throw new Error('Pedido não encontrado');
+    if (order.status !== 'Finalizado' && order.status !== 'Parcialmente Devolvida') {
+      throw new Error(`Somente vendas Finalizadas ou Parcialmente Devolvidas podem receber devolução (status atual: ${order.status})`);
+    }
+
+    const retailers = getStored(STORAGE_KEYS.RETAILERS, INITIAL_RETAILERS);
+    const retailer = retailers.find(r => r.id === order.retailer_id);
+    const commissionRate = parseFloat(retailer?.commission_per_unit_usd) || 0;
+
+    const allocatedDevices = order.allocated_devices || [];
+    const alreadyReturnedIds = new Set((order.returned_devices || []).map(d => d.device_id));
+
+    const targets = [];
+    for (const deviceId of deviceIds) {
+      if (alreadyReturnedIds.has(deviceId)) {
+        const dev = (order.returned_devices || []).find(d => d.device_id === deviceId);
+        throw new Error(`Aparelho ${dev?.imei || deviceId} já foi devolvido anteriormente.`);
+      }
+      const alloc = allocatedDevices.find(d => d.device_id === deviceId);
+      if (!alloc) {
+        throw new Error(`Aparelho ${deviceId} não pertence a este pedido ou não está mais Vendido.`);
+      }
+      targets.push(alloc);
+    }
+
+    let totalReturned = 0;
+    let totalCostReturned = 0;
+    const returnItems = [];
+
+    // Denominador estável para o preço médio de fallback: total de aparelhos JÁ
+    // alocados ao pedido (ativos + devolvidos), que nunca muda — nunca a contagem
+    // atual, que encolhe a cada devolução e infla o preço médio em devoluções sucessivas.
+    const totalEverAllocated = allocatedDevices.length + (order.returned_devices || []).length;
+
+    for (const dev of targets) {
+      const matchingItem = (order.items || []).find(it =>
+        it.model === dev.model && it.storage === dev.storage && (!it.grade_id || it.grade_id === dev.grade_id)
+      );
+      const unitPrice = matchingItem
+        ? parseFloat(matchingItem.unit_price_usd)
+        : (parseFloat(order.total_amount_usd) || 0) / Math.max(1, totalEverAllocated);
+
+      totalReturned += unitPrice;
+      totalCostReturned += parseFloat(dev.cost_price_usd) || 0;
+      returnItems.push({
+        device_id: dev.device_id,
+        imei: dev.imei,
+        model: dev.model,
+        storage: dev.storage,
+        original_sale_price_usd: unitPrice,
+        returned_at: new Date().toISOString()
+      });
+    }
+
+    const totalCommissionReturned = targets.length * commissionRate;
+
+    const newReturn = {
+      id: `ret-${Date.now()}`,
+      order_id: orderId,
+      retailer_id: order.retailer_id,
+      reason,
+      notes: notes || '',
+      total_amount_usd: totalReturned,
+      total_commission_usd: totalCommissionReturned,
+      created_by: createdBy,
+      created_at: new Date().toISOString(),
+      items: returnItems
+    };
+
+    const devices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
+    const returnedIdsSet = new Set(deviceIds);
+    const updatedDevices = devices.map(d => returnedIdsSet.has(d.id) ? { ...d, status: 'Disponível', updated_at: new Date().toISOString() } : d);
+    setStored(STORAGE_KEYS.DEVICES, updatedDevices);
+
+    const movements = getStored(STORAGE_KEYS.MOVEMENTS, INITIAL_MOVEMENTS);
+    const newMovements = targets.map(dev => ({
+      id: `mov-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      device_id: dev.device_id,
+      imei: dev.imei,
+      order_id: orderId,
+      movement_type: 'Retorno',
+      previous_status: 'Vendido',
+      new_status: 'Disponível',
+      reason: `Devolução de Venda (Pedido ${order.order_number})`,
+      notes: `Motivo: ${reason}${notes ? ' — ' + notes : ''}`,
+      created_at: new Date().toISOString()
+    }));
+    setStored(STORAGE_KEYS.MOVEMENTS, [...newMovements, ...movements]);
+
+    const newReturnedAmount = (order.returned_amount_usd || 0) + totalReturned;
+    const newReturnedCommission = (order.returned_commission_usd || 0) + totalCommissionReturned;
+    const netTotal = Math.max(0, (order.total_amount_usd || 0) - newReturnedAmount);
+    const newBalanceDue = Math.max(0, netTotal - (order.paid_amount_usd || 0));
+    const newCreditDue = Math.max(0, (order.paid_amount_usd || 0) - netTotal);
+    const newProfit = (order.total_profit_usd || 0) - (totalReturned - totalCostReturned);
+
+    const remainingAllocated = allocatedDevices.filter(d => !returnedIdsSet.has(d.device_id));
+    const newStatus = remainingAllocated.length === 0 ? 'Totalmente Devolvida' : 'Parcialmente Devolvida';
+
+    // Ajusta parcelas em aberto (da mais recente para a mais antiga) para não deixar Contas a Receber incorreto
+    const installments = getStored(STORAGE_KEYS.INSTALLMENTS, INITIAL_INSTALLMENTS);
+    const orderOpenInstallments = installments
+      .filter(i => i.order_id === orderId && i.status !== 'Pago')
+      .sort((a, b) => new Date(b.due_date) - new Date(a.due_date));
+    const openSum = orderOpenInstallments.reduce((s, i) => s + (parseFloat(i.amount_usd) || 0), 0);
+
+    if (openSum > newBalanceDue) {
+      let excess = openSum - newBalanceDue;
+      const adjustments = new Map();
+      for (const inst of orderOpenInstallments) {
+        if (excess <= 0) break;
+        const amount = parseFloat(inst.amount_usd) || 0;
+        const reduction = Math.min(excess, amount);
+        if (reduction >= amount) {
+          adjustments.set(inst.id, { status: 'Pago', amount_usd: 0, notes: `${inst.notes || ''} [Cancelada por devolução]`.trim() });
+        } else {
+          adjustments.set(inst.id, { amount_usd: amount - reduction });
+        }
+        excess -= reduction;
+      }
+      setStored(STORAGE_KEYS.INSTALLMENTS, installments.map(i => adjustments.has(i.id) ? { ...i, ...adjustments.get(i.id) } : i));
+    }
+
+    const updatedOrders = orders.map(o => {
+      if (o.id === orderId) {
+        return {
+          ...o,
+          allocated_devices: remainingAllocated,
+          returned_devices: [...(o.returned_devices || []), ...targets.map(t => ({ ...t, returned_at: new Date().toISOString() }))],
+          returns: [...(o.returns || []), newReturn],
+          returned_amount_usd: newReturnedAmount,
+          returned_commission_usd: newReturnedCommission,
+          total_profit_usd: newProfit,
+          balance_due_usd: newBalanceDue,
+          credit_due_usd: newCreditDue,
+          status: newStatus
+        };
+      }
+      return o;
+    });
+    setStored(STORAGE_KEYS.ORDERS, updatedOrders);
+
+    return {
+      success: true,
+      return_id: newReturn.id,
+      order_id: orderId,
+      order_status: newStatus,
+      returned_amount_usd: totalReturned,
+      returned_commission_usd: totalCommissionReturned,
+      net_total_usd: netTotal,
+      balance_due_usd: newBalanceDue,
+      credit_due_usd: newCreditDue
     };
   },
 

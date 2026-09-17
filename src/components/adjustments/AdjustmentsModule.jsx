@@ -3,7 +3,6 @@ import {
   History, 
   Search, 
   Filter, 
-  Smartphone,
   Tag,
   Clock,
   ArrowRight,

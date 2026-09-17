@@ -20,15 +20,34 @@ CREATE TABLE IF NOT EXISTS public.grades (
 CREATE TABLE IF NOT EXISTS public.stock_entries (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     reference_code VARCHAR(100) NOT NULL,
-    model VARCHAR(100) NOT NULL,
-    storage VARCHAR(50) NOT NULL,
+    -- model/storage/unit_cost_usd: preenchidos apenas em lotes legados de
+    -- configuração única. Lotes novos são multi-item (ver stock_entry_items)
+    -- e deixam esses campos nulos, guardando apenas quantidade/custo agregados.
+    model VARCHAR(100),
+    storage VARCHAR(50),
     grade_id UUID REFERENCES public.grades(id) ON DELETE RESTRICT,
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     total_cost_usd NUMERIC(12, 2) NOT NULL CHECK (total_cost_usd >= 0),
-    unit_cost_usd NUMERIC(12, 2) NOT NULL CHECK (unit_cost_usd >= 0),
+    unit_cost_usd NUMERIC(12, 2) CHECK (unit_cost_usd >= 0),
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Itens/configurações de um lote multi-modelo (1 lote -> N itens -> N devices)
+CREATE TABLE IF NOT EXISTS public.stock_entry_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    stock_entry_id UUID NOT NULL REFERENCES public.stock_entries(id) ON DELETE CASCADE,
+    model VARCHAR(100) NOT NULL,
+    storage VARCHAR(50) NOT NULL,
+    grade_id UUID NOT NULL REFERENCES public.grades(id) ON DELETE RESTRICT,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_cost_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (unit_cost_usd >= 0),
+    suggested_price_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (suggested_price_usd >= 0),
+    total_cost_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (total_cost_usd >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_entry_items_entry ON public.stock_entry_items (stock_entry_id);
 
 CREATE TABLE IF NOT EXISTS public.devices (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -48,6 +67,7 @@ CREATE TABLE IF NOT EXISTS public.devices (
     status VARCHAR(30) NOT NULL DEFAULT 'Disponível' 
         CHECK (status IN ('Disponível', 'Reservado', 'Vendido', 'Retirado por ajuste')),
     stock_entry_id UUID REFERENCES public.stock_entries(id) ON DELETE SET NULL,
+    stock_entry_item_id UUID REFERENCES public.stock_entry_items(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -141,12 +161,13 @@ CREATE TABLE IF NOT EXISTS public.installments (
     order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
     retailer_id UUID NOT NULL REFERENCES public.retailers(id) ON DELETE RESTRICT,
     installment_number INTEGER NOT NULL CHECK (installment_number > 0),
-    amount_usd NUMERIC(12, 2) NOT NULL CHECK (amount_usd > 0),
+    amount_usd NUMERIC(12, 2) NOT NULL CHECK (amount_usd >= 0),
     due_date DATE NOT NULL,
     payment_date TIMESTAMPTZ,
-    status VARCHAR(30) NOT NULL DEFAULT 'A vencer' 
+    status VARCHAR(30) NOT NULL DEFAULT 'A vencer'
         CHECK (status IN ('A vencer', 'Vence hoje', 'Pago', 'Vencido')),
     payment_id UUID REFERENCES public.payments(id) ON DELETE SET NULL,
+    notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -207,6 +228,7 @@ CREATE TABLE IF NOT EXISTS public.settings (
 -- 3. HABILITAR RLS
 ALTER TABLE public.grades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_entry_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.devices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.retailers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
@@ -499,7 +521,15 @@ BEGIN
         RAISE EXCEPTION 'Pedido % não encontrado', p_order_id;
     END IF;
 
-    FOR v_alloc IN 
+    IF v_order.status IN ('Finalizado', 'Parcialmente Devolvida', 'Totalmente Devolvida') THEN
+        RAISE EXCEPTION 'Pedido % já foi finalizado anteriormente', v_order.order_number;
+    END IF;
+
+    IF v_order.status = 'Cancelado' THEN
+        RAISE EXCEPTION 'Pedido % está cancelado e não pode ser finalizado', v_order.order_number;
+    END IF;
+
+    FOR v_alloc IN
         SELECT oda.device_id, d.cost_price_usd 
         FROM public.order_device_allocations oda
         JOIN public.devices d ON d.id = oda.device_id
@@ -938,6 +968,178 @@ BEGIN
 END;
 $$;
 
+-- 6b. RPC: Entrada de Lote com Múltiplos Itens/Modelos (ver migration 011)
+CREATE OR REPLACE FUNCTION public.rpc_create_stock_entry_batch_multi(
+    p_reference_code VARCHAR,
+    p_notes TEXT,
+    p_created_by VARCHAR,
+    p_source VARCHAR,
+    p_items JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_stock_entry_id UUID;
+    v_item JSONB;
+    v_unit JSONB;
+    v_item_id UUID;
+    v_imei VARCHAR;
+    v_color VARCHAR;
+    v_battery INTEGER;
+    v_cost NUMERIC;
+    v_price NUMERIC;
+    v_item_unit_cost NUMERIC;
+    v_item_suggested_price NUMERIC;
+    v_item_total_cost NUMERIC;
+    v_grand_total_cost NUMERIC := 0;
+    v_grand_total_qty INTEGER := 0;
+    v_inserted_device_id UUID;
+    v_existing_id UUID;
+    v_seen_imeis TEXT[] := ARRAY[]::TEXT[];
+    v_items_result JSONB := '[]'::JSONB;
+    v_item_devices JSONB;
+BEGIN
+    IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
+        RAISE EXCEPTION 'O lote precisa conter ao menos um item/configuração.';
+    END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        FOR v_unit IN SELECT * FROM jsonb_array_elements(v_item->'units')
+        LOOP
+            v_imei := TRIM(v_unit->>'imei');
+            IF v_imei IS NULL OR v_imei = '' THEN
+                RAISE EXCEPTION 'Todas as unidades devem possuir um IMEI ou Serial válido.';
+            END IF;
+
+            IF v_imei = ANY(v_seen_imeis) THEN
+                RAISE EXCEPTION 'IMEI % está duplicado entre itens/configurações do mesmo lote.', v_imei;
+            END IF;
+            v_seen_imeis := array_append(v_seen_imeis, v_imei);
+
+            SELECT id INTO v_existing_id FROM public.devices WHERE imei = v_imei LIMIT 1;
+            IF v_existing_id IS NOT NULL THEN
+                RAISE EXCEPTION 'O IMEI % já está cadastrado no sistema (Conflito com ID: %).', v_imei, v_existing_id;
+            END IF;
+        END LOOP;
+    END LOOP;
+
+    INSERT INTO public.stock_entries (reference_code, quantity, total_cost_usd, notes, created_by, source, created_at)
+    VALUES (p_reference_code, 1, 0, p_notes, COALESCE(p_created_by, 'admin'), COALESCE(p_source, 'manual'), NOW())
+    RETURNING id INTO v_stock_entry_id;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_item_unit_cost := COALESCE((v_item->>'unit_cost_usd')::NUMERIC, 0);
+        v_item_suggested_price := COALESCE((v_item->>'suggested_price_usd')::NUMERIC, 0);
+        v_item_total_cost := 0;
+        v_item_devices := '[]'::JSONB;
+
+        INSERT INTO public.stock_entry_items (stock_entry_id, model, storage, grade_id, quantity, unit_cost_usd, suggested_price_usd, total_cost_usd)
+        VALUES (
+            v_stock_entry_id, v_item->>'model', v_item->>'storage', (v_item->>'grade_id')::UUID,
+            jsonb_array_length(v_item->'units'), v_item_unit_cost, v_item_suggested_price, 0
+        ) RETURNING id INTO v_item_id;
+
+        FOR v_unit IN SELECT * FROM jsonb_array_elements(v_item->'units')
+        LOOP
+            v_imei := TRIM(v_unit->>'imei');
+            v_color := COALESCE(v_unit->>'color', 'Padrão');
+            v_battery := COALESCE((v_unit->>'battery_health')::INTEGER, 100);
+            v_cost := COALESCE((v_unit->>'cost_price_usd')::NUMERIC, v_item_unit_cost);
+            v_price := COALESCE((v_unit->>'suggested_price_usd')::NUMERIC, v_item_suggested_price);
+
+            INSERT INTO public.devices (
+                model, storage, grade_id, color, battery_health, imei,
+                cost_price_usd, suggested_price_usd, status,
+                stock_entry_id, stock_entry_item_id, source, created_at, updated_at
+            ) VALUES (
+                v_item->>'model', v_item->>'storage', (v_item->>'grade_id')::UUID, v_color, v_battery, v_imei,
+                v_cost, v_price, 'Disponível', v_stock_entry_id, v_item_id, COALESCE(p_source, 'manual'), NOW(), NOW()
+            ) RETURNING id INTO v_inserted_device_id;
+
+            INSERT INTO public.stock_movements (device_id, movement_type, previous_status, new_status, reason, notes, created_at)
+            VALUES (
+                v_inserted_device_id, 'Entrada', NULL, 'Disponível',
+                'Entrada de Estoque (Lote: ' || p_reference_code || ' — ' || (v_item->>'model') || ' ' || (v_item->>'storage') || ')',
+                'Entrada registrada por ' || COALESCE(p_created_by, 'admin'), NOW()
+            );
+
+            v_item_total_cost := v_item_total_cost + v_cost;
+            v_item_devices := v_item_devices || jsonb_build_object(
+                'id', v_inserted_device_id, 'imei', v_imei, 'color', v_color,
+                'battery_health', v_battery, 'cost_price_usd', v_cost, 'suggested_price_usd', v_price
+            );
+        END LOOP;
+
+        UPDATE public.stock_entry_items SET total_cost_usd = v_item_total_cost WHERE id = v_item_id;
+        v_grand_total_cost := v_grand_total_cost + v_item_total_cost;
+        v_grand_total_qty := v_grand_total_qty + jsonb_array_length(v_item->'units');
+
+        v_items_result := v_items_result || jsonb_build_object(
+            'item_id', v_item_id, 'model', v_item->>'model', 'storage', v_item->>'storage',
+            'grade_id', v_item->>'grade_id', 'quantity', jsonb_array_length(v_item->'units'),
+            'total_cost_usd', v_item_total_cost, 'devices', v_item_devices
+        );
+    END LOOP;
+
+    UPDATE public.stock_entries SET quantity = v_grand_total_qty, total_cost_usd = v_grand_total_cost WHERE id = v_stock_entry_id;
+
+    INSERT INTO public.audit_logs (table_name, record_id, action, new_data, performed_by, created_at)
+    VALUES (
+        'stock_entries', v_stock_entry_id, 'RPC_CREATE_STOCK_ENTRY_BATCH_MULTI',
+        jsonb_build_object('stock_entry_id', v_stock_entry_id, 'reference_code', p_reference_code, 'items', v_items_result),
+        COALESCE(p_created_by, 'admin'), NOW()
+    );
+
+    RETURN jsonb_build_object(
+        'success', true, 'stock_entry_id', v_stock_entry_id, 'reference_code', p_reference_code,
+        'total_items', jsonb_array_length(p_items), 'total_quantity', v_grand_total_qty,
+        'total_cost_usd', v_grand_total_cost, 'items', v_items_result
+    );
+END;
+$$;
+
+-- 6c. RPC: Exclusão de Venda com Restauração Automática de Estoque
+CREATE OR REPLACE FUNCTION public.rpc_delete_order(p_order_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_order RECORD;
+    v_alloc RECORD;
+    v_restored_count INTEGER := 0;
+BEGIN
+    SELECT * INTO v_order FROM public.orders WHERE id = p_order_id FOR UPDATE;
+    IF v_order IS NULL THEN
+        RAISE EXCEPTION 'Pedido % não encontrado', p_order_id;
+    END IF;
+
+    FOR v_alloc IN
+        SELECT device_id, status FROM public.order_device_allocations WHERE order_id = p_order_id
+    LOOP
+        IF v_alloc.status != 'Devolvido' THEN
+            UPDATE public.devices SET status = 'Disponível', updated_at = NOW() WHERE id = v_alloc.device_id;
+
+            INSERT INTO public.stock_movements (device_id, order_id, movement_type, previous_status, new_status, reason)
+            VALUES (v_alloc.device_id, p_order_id, 'Cancelamento de Reserva', v_alloc.status, 'Disponível', 'Venda ' || v_order.order_number || ' excluída pelo administrador');
+
+            v_restored_count := v_restored_count + 1;
+        END IF;
+    END LOOP;
+
+    DELETE FROM public.sale_return_items WHERE order_id = p_order_id;
+    DELETE FROM public.sale_returns WHERE order_id = p_order_id;
+    DELETE FROM public.payments WHERE order_id = p_order_id;
+    DELETE FROM public.orders WHERE id = p_order_id;
+
+    RETURN jsonb_build_object('success', true, 'order_id', p_order_id, 'restored_devices', v_restored_count);
+END;
+$$;
+
 -- 7. SEED INICIAL DE DADOS
 INSERT INTO public.grades (id, name, description, badge_color, is_active)
 VALUES 
@@ -985,5 +1187,7 @@ GRANT EXECUTE ON FUNCTION public.rpc_cancel_order(UUID, TEXT) TO authenticated, 
 GRANT EXECUTE ON FUNCTION public.rpc_finalize_order_sale(UUID, JSONB, JSONB) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.rpc_adjust_device_stock(UUID, VARCHAR, TEXT) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.rpc_create_stock_entry_batch(VARCHAR, VARCHAR, VARCHAR, UUID, INTEGER, NUMERIC, NUMERIC, TEXT, VARCHAR, VARCHAR, JSONB) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.rpc_create_stock_entry_batch_multi(VARCHAR, TEXT, VARCHAR, VARCHAR, JSONB) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.rpc_delete_order(UUID) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.rpc_sync_external_devices(JSONB, VARCHAR, VARCHAR) TO authenticated, anon, service_role;
 

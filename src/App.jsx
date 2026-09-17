@@ -29,7 +29,6 @@ export function App() {
 
   // Navigation State
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [navParams, setNavParams] = useState({});
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
@@ -200,9 +199,8 @@ export function App() {
   }, [session, loadAllData]);
 
   // Navegação com parâmetros
-  const handleNavigate = (tabId, params = {}) => {
+  const handleNavigate = (tabId) => {
     setActiveTab(tabId);
-    setNavParams(params);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -214,6 +212,11 @@ export function App() {
 
   const handleSaveRetailer = async (retailer) => {
     await DataService.saveRetailer(retailer);
+    await loadAllData();
+  };
+
+  const handleDeleteRetailer = async (id) => {
+    await DataService.deleteRetailer(id);
     await loadAllData();
   };
 
@@ -238,6 +241,12 @@ export function App() {
     await loadAllData();
   };
 
+  const handleDeleteOrder = async (orderId) => {
+    const res = await DataService.deleteOrder(orderId);
+    await loadAllData();
+    return res;
+  };
+
   const handleMarkDeviceSeparated = async (orderId, deviceId) => {
     await DataService.markDeviceAsSeparated(orderId, deviceId);
     await loadAllData();
@@ -246,6 +255,12 @@ export function App() {
   const handleFinalizeSale = async (orderId, paymentsList, installmentsList) => {
     await DataService.finalizeOrderSale(orderId, paymentsList, installmentsList);
     await loadAllData();
+  };
+
+  const handleRegisterSaleReturn = async (orderId, deviceIds, reason, notes) => {
+    const res = await DataService.registerSaleReturn(orderId, deviceIds, reason, notes, user?.email || 'admin');
+    await loadAllData();
+    return res;
   };
 
   const handlePayInstallment = async (installmentId, details) => {
@@ -258,8 +273,8 @@ export function App() {
     await loadAllData();
   };
 
-  const handleConfirmStockEntry = async (batchConfig, unitsList) => {
-    const res = await DataService.createStockEntryBatch(batchConfig, unitsList, user?.email || 'admin');
+  const handleConfirmStockEntry = async (batchHeader, items) => {
+    const res = await DataService.createStockEntryBatchMulti(batchHeader, items, user?.email || 'admin');
     await loadAllData();
     return res;
   };
@@ -279,7 +294,7 @@ export function App() {
     orders: { title: 'Vendas', subtitle: 'Seleção automática de modelos, reserva e finalização comercial' },
     retailers: { title: 'Lojistas', subtitle: 'Gestão de parceiros comerciais e histórico' },
     separation: { title: 'Separação & Conferência', subtitle: 'Bipador físico de IMEIs para expedição' },
-    payments: { title: 'Financeiro & Parcelas', subtitle: 'Contas a receber, baixas e pagamentos mistos' },
+    payments: { title: 'Contas a Receber', subtitle: 'Saldos em aberto, parcelas e baixas de recebimento' },
     commissions: { title: 'Comissões', subtitle: 'Comissão única oficial por indicação de lojista' },
     profit: { title: 'Faturamento', subtitle: 'Acompanhe o faturamento realizado e o potencial de vendas da operação' },
     reports: { title: 'Relatórios & Exportação', subtitle: 'Exportação em Excel (.xlsx) e CSV' },
@@ -420,6 +435,7 @@ export function App() {
               orders={orders}
               installments={installments}
               onSaveRetailer={handleSaveRetailer}
+              onDeleteRetailer={handleDeleteRetailer}
               onNavigate={handleNavigate}
             />
           )}
@@ -430,29 +446,30 @@ export function App() {
               retailers={retailers}
               devices={devices}
               grades={grades}
+              exchangeRate={exchangeRate}
               onReserveOrder={handleReserveOrder}
               onCancelOrder={handleCancelOrder}
-              onNavigate={handleNavigate}
+              onDeleteOrder={handleDeleteOrder}
+              onFinalizeSale={handleFinalizeSale}
+              onRegisterReturn={handleRegisterSaleReturn}
             />
           )}
 
           {activeTab === 'separation' && (
             <SeparationModule
               orders={orders}
+              exchangeRate={exchangeRate}
               onMarkDeviceSeparated={handleMarkDeviceSeparated}
+              onFinalizeSale={handleFinalizeSale}
               onNavigate={handleNavigate}
             />
           )}
 
           {activeTab === 'payments' && (
             <PaymentsModule
-              orders={orders}
               installments={installments}
               exchangeRate={exchangeRate}
-              selectedOrderIdFromNav={navParams.orderId}
-              onFinalizeSale={handleFinalizeSale}
               onPayInstallment={handlePayInstallment}
-              onNavigate={handleNavigate}
             />
           )}
 

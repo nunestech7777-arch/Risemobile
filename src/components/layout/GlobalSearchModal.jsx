@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Smartphone, ShoppingBag, Users, ArrowRight, X } from 'lucide-react';
+import { Search, ShoppingBag, Users, ArrowRight, X } from 'lucide-react';
+import { IPhoneIcon } from '../common/IPhoneIcon';
 import { formatUSD, formatImei, getStatusBadge } from '../../lib/formatters';
 
 export const GlobalSearchModal = ({ 
@@ -97,7 +98,7 @@ export const GlobalSearchModal = ({
               {filteredDevices.length > 0 && (
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-300 px-3 mb-2 flex items-center gap-1.5">
-                    <Smartphone className="w-3.5 h-3.5" /> Aparelhos ({filteredDevices.length})
+                    <IPhoneIcon className="w-3.5 h-3.5" /> Aparelhos ({filteredDevices.length})
                   </h4>
                   <div className="space-y-1">
                     {filteredDevices.map((d) => (
@@ -111,7 +112,7 @@ export const GlobalSearchModal = ({
                       >
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-white/[0.08] flex items-center justify-center">
-                            <Smartphone className="w-4 h-4 text-slate-600 dark:text-cyan-300 stroke-[1.8]" />
+                            <IPhoneIcon className="w-4 h-4 text-slate-600 dark:text-cyan-300 stroke-[1.8]" />
                           </div>
                           <div>
                             <div className="text-sm font-bold text-slate-900 dark:text-slate-100">

@@ -67,6 +67,17 @@ async function runAllAudits() {
     assert.strictEqual(retailer1.commission_per_unit_usd, 15.00);
   });
 
+  const retailerTemp = await DataService.saveRetailer({
+    store_name: 'Lojista Temporário Exclusão',
+    contact_name: 'Teste Exclusão',
+    whatsapp: '11888887777'
+  });
+  await DataService.deleteRetailer(retailerTemp.id);
+  const currentRetailers = await DataService.getRetailers();
+  runTest('Exclusão de lojista sem pedidos vinculados remove com sucesso do sistema', () => {
+    assert.ok(!currentRetailers.some(r => r.id === retailerTemp.id));
+  });
+
   console.log('\n--- 3. AUDITORIA DE ENTRADA MANUAL DE ESTOQUE EM LOTE ---');
   const batch1 = {
     reference_code: 'LOTE-AUDIT-001',

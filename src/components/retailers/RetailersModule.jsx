@@ -12,7 +12,8 @@ import {
   ExternalLink,
   Edit2,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
+  Trash2
 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -28,6 +29,7 @@ export const RetailersModule = ({
   orders = [],
   installments = [],
   onSaveRetailer,
+  onDeleteRetailer,
   onNavigate
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -35,6 +37,24 @@ export const RetailersModule = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+
+  const handleDelete = async (retailer, e) => {
+    e?.stopPropagation();
+    if (!onDeleteRetailer || !retailer?.id) return;
+    if (window.confirm(`Tem certeza que deseja excluir o lojista "${retailer.store_name}"? Esta ação removerá o cadastro do lojista.`)) {
+      try {
+        await onDeleteRetailer(retailer.id);
+        if (selectedRetailer?.id === retailer.id) {
+          setSelectedRetailer(null);
+        }
+        if (isModalOpen && formData.id === retailer.id) {
+          setIsModalOpen(false);
+        }
+      } catch (err) {
+        alert(err.message || 'Erro ao excluir lojista.');
+      }
+    }
+  };
 
   // Form State
   const [formData, setFormData] = useState({
@@ -193,14 +213,25 @@ export const RetailersModule = ({
                   <MessageSquare className="w-3.5 h-3.5 text-slate-700 dark:text-cyan-300" /> WhatsApp
                 </a>
 
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => handleOpenEdit(r, e)}
-                  icon={Edit2}
-                >
-                  Editar
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => handleOpenEdit(r, e)}
+                    icon={Edit2}
+                  >
+                    Editar
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => handleDelete(r, e)}
+                    icon={Trash2}
+                    className="text-rose-500 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                  >
+                    Excluir
+                  </Button>
+                </div>
               </div>
             </Card>
           );
@@ -262,6 +293,31 @@ export const RetailersModule = ({
                   </TableRow>
                 ))}
               </Table>
+            </div>
+
+            {/* Actions */}
+            <div className="pt-4 border-t border-slate-200 dark:border-white/10 flex items-center justify-between">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleDelete(selectedRetailer)}
+                icon={Trash2}
+                className="text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+              >
+                Excluir Lojista
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={(e) => {
+                  const target = selectedRetailer;
+                  setSelectedRetailer(null);
+                  handleOpenEdit(target, e);
+                }}
+                icon={Edit2}
+              >
+                Editar Dados
+              </Button>
             </div>
           </div>
         </Drawer>
@@ -343,13 +399,28 @@ export const RetailersModule = ({
             </div>
           )}
 
-          <div className="flex justify-end gap-3 pt-4">
-            <Button variant="outline" size="sm" type="button" onClick={() => setIsModalOpen(false)} disabled={isSubmitting}>
-              Cancelar
-            </Button>
-            <Button variant="primary" size="sm" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? 'Salvando...' : 'Salvar Lojista'}
-            </Button>
+          <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-white/10">
+            {formData.id ? (
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => handleDelete(formData)}
+                icon={Trash2}
+                className="text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                disabled={isSubmitting}
+              >
+                Excluir Lojista
+              </Button>
+            ) : <div />}
+            <div className="flex gap-3">
+              <Button variant="outline" size="sm" type="button" onClick={() => setIsModalOpen(false)} disabled={isSubmitting}>
+                Cancelar
+              </Button>
+              <Button variant="primary" size="sm" type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Salvando...' : 'Salvar Lojista'}
+              </Button>
+            </div>
           </div>
         </form>
       </Modal>

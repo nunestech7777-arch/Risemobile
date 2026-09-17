@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { 
   LayoutGrid, 
-  Smartphone, 
   PackagePlus,
   Users, 
   ShoppingBag, 
@@ -15,15 +14,16 @@ import {
 } from 'lucide-react';
 
 import { RiseMobileLogo } from '../common/RiseMobileLogo';
+import { IPhoneIcon } from '../common/IPhoneIcon';
 
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
-  { id: 'stock', label: 'Estoque', icon: Smartphone },
+  { id: 'stock', label: 'Estoque', icon: IPhoneIcon },
   { id: 'stock_entry', label: 'Entrada de Estoque', icon: PackagePlus },
   { id: 'sales', label: 'Vendas', icon: ShoppingBag },
   { id: 'retailers', label: 'Lojistas', icon: Users },
   { id: 'separation', label: 'Separação & Conferência', icon: ScanLine },
-  { id: 'payments', label: 'Financeiro & Parcelas', icon: Receipt },
+  { id: 'payments', label: 'Contas a Receber', icon: Receipt },
   { id: 'commissions', label: 'Comissões', icon: Award },
   { id: 'profit', label: 'Faturamento', icon: TrendingUp },
   { id: 'reports', label: 'Relatórios & Exportação', icon: BarChart3 },

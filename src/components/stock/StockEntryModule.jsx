@@ -1,30 +1,26 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  PackagePlus, 
-  Layers, 
-  FileSpreadsheet, 
-  Download, 
-  UploadCloud, 
-  CheckCircle2, 
-  AlertCircle, 
-  AlertTriangle, 
-  Trash2, 
-  Sparkles, 
-  ClipboardPaste, 
-  ArrowRight, 
-  RefreshCw,
-  Smartphone,
-  Info,
+import {
+  PackagePlus,
+  Layers,
+  FileSpreadsheet,
+  Download,
+  UploadCloud,
+  CheckCircle2,
+  AlertCircle,
+  AlertTriangle,
+  Trash2,
+  ClipboardPaste,
+  ArrowRight,
   Check,
-  X
+  X,
+  Plus
 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { Badge } from '../ui/Badge';
 import { Input, Select, CurrencyInput } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { Modal } from '../ui/Modal';
-import { formatUSD, formatImei } from '../../lib/formatters';
+import { formatUSD } from '../../lib/formatters';
 import { downloadStockTemplate, parseStockExcelFile } from '../../lib/excelUtils';
 
 const IPHONE_MODELS = [
@@ -37,10 +33,35 @@ const IPHONE_MODELS = [
 const STORAGE_OPTIONS = ['64GB', '128GB', '256GB', '512GB', '1TB'];
 
 const COLOR_OPTIONS = [
-  'Preto', 'Branco', 'Meia-noite', 'Estelar', 'Azul', 'Rosa', 
-  'Verde', 'Roxo Profundo', 'Dourado', 'Prateado', 'Grafite', 
+  'Preto', 'Branco', 'Meia-noite', 'Estelar', 'Azul', 'Rosa',
+  'Verde', 'Roxo Profundo', 'Dourado', 'Prateado', 'Grafite',
   'Titânio Natural', 'Titânio Preto', 'Titânio Branco', 'Titânio Deserto'
 ];
+
+const generateBatchCode = () => `LOTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+const createEmptyUnit = (costDefault, priceDefault) => ({
+  id: `unit-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+  imei: '',
+  color: 'Meia-noite',
+  battery_health: 95,
+  cost_price_usd: costDefault,
+  suggested_price_usd: priceDefault
+});
+
+const createDefaultItem = (defaultGradeId) => {
+  const cost = '350.00';
+  const price = '430.00';
+  return {
+    id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    model: 'iPhone 13',
+    storage: '128GB',
+    grade_id: defaultGradeId || '',
+    unit_cost_usd: cost,
+    suggested_price_usd: price,
+    units: [createEmptyUnit(cost, price)]
+  };
+};
 
 export const StockEntryModule = ({
   grades = [],
@@ -52,109 +73,122 @@ export const StockEntryModule = ({
   const [activeTab, setActiveTab] = useState('manual'); // 'manual' | 'import'
 
   // =========================================================================
-  // ABA 1: ENTRADA MANUAL EM LOTE
+  // ABA 1: ENTRADA MANUAL EM LOTE (1 lote -> N itens/modelos -> N unidades)
   // =========================================================================
-  const generateBatchCode = () => `LOTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-  const [batchConfig, setBatchConfig] = useState({
+  const [batchHeader, setBatchHeader] = useState({
     reference_code: generateBatchCode(),
-    model: 'iPhone 13',
-    storage: '128GB',
-    grade_id: grades[0]?.id || '',
-    unit_cost_usd: '350.00',
-    suggested_price_usd: '430.00',
-    quantity: 3,
     notes: ''
   });
+  const [items, setItems] = useState(() => [createDefaultItem('')]);
 
-  // Atualiza grade_id padrão quando grades carregam
+  // Preenche a grade padrão dos itens assim que as grades carregarem
   useEffect(() => {
-    if (grades.length > 0 && !batchConfig.grade_id) {
-      setBatchConfig(prev => ({ ...prev, grade_id: grades[0].id }));
+    if (grades.length > 0) {
+      setItems(prev => prev.map(it => (it.grade_id ? it : { ...it, grade_id: grades[0].id })));
     }
   }, [grades]);
 
-  // Lista individual das unidades
-  const [units, setUnits] = useState(() => {
-    return Array.from({ length: 3 }, (_, idx) => ({
-      id: `unit-${idx + 1}`,
-      imei: '',
-      color: 'Meia-noite',
-      battery_health: 95,
-      cost_price_usd: '350.00',
-      suggested_price_usd: '430.00'
-    }));
-  });
-
-  // Modal para Colar Múltiplos IMEIs
+  // Modal para Colar Múltiplos IMEIs (sempre relativo a UM item específico)
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteTargetItemId, setPasteTargetItemId] = useState(null);
   const [pastedImeisText, setPastedImeisText] = useState('');
 
-  // Status de submissão e feedback
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [successBanner, setSuccessBanner] = useState(null);
 
-  // Sincroniza a quantidade de linhas com o campo de quantidade do lote
-  const handleQuantityChange = (newQtyStr) => {
+  const getGradeName = (gradeId) => grades.find(g => g.id === gradeId)?.name || '—';
+
+  // Atualiza um campo simples do item (modelo, armazenamento, grade)
+  const handleUpdateItemField = (itemId, field, value) => {
+    setItems(prev => prev.map(it => (it.id === itemId ? { ...it, [field]: value } : it)));
+  };
+
+  // Custo padrão do item muda -> propaga para as unidades daquele item
+  const handleItemCostChange = (itemId, newCost) => {
+    setItems(prev => prev.map(it => (
+      it.id === itemId
+        ? { ...it, unit_cost_usd: newCost, units: it.units.map(u => ({ ...u, cost_price_usd: newCost })) }
+        : it
+    )));
+  };
+
+  // Preço sugerido do item muda -> propaga para as unidades daquele item
+  const handleItemPriceChange = (itemId, newPrice) => {
+    setItems(prev => prev.map(it => (
+      it.id === itemId
+        ? { ...it, suggested_price_usd: newPrice, units: it.units.map(u => ({ ...u, suggested_price_usd: newPrice })) }
+        : it
+    )));
+  };
+
+  // Sincroniza a quantidade de unidades de UM item (nunca cria novo lote)
+  const handleItemQuantityChange = (itemId, newQtyStr) => {
     const newQty = parseInt(newQtyStr, 10);
-    if (isNaN(newQty) || newQty < 1) {
-      setBatchConfig(prev => ({ ...prev, quantity: newQtyStr }));
+    const targetItem = items.find(it => it.id === itemId);
+    if (!targetItem || isNaN(newQty) || newQty < 1) return;
+
+    const currentLen = targetItem.units.length;
+    if (newQty === currentLen) return;
+
+    if (newQty > currentLen) {
+      const additional = Array.from(
+        { length: newQty - currentLen },
+        () => createEmptyUnit(targetItem.unit_cost_usd, targetItem.suggested_price_usd)
+      );
+      setItems(prev => prev.map(it => (it.id === itemId ? { ...it, units: [...it.units, ...additional] } : it)));
       return;
     }
 
-    setBatchConfig(prev => ({ ...prev, quantity: newQty }));
-
-    setUnits(prevUnits => {
-      if (newQty === prevUnits.length) return prevUnits;
-
-      if (newQty > prevUnits.length) {
-        const additional = Array.from({ length: newQty - prevUnits.length }, (_, idx) => ({
-          id: `unit-${Date.now()}-${idx}`,
-          imei: '',
-          color: prevUnits[0]?.color || 'Meia-noite',
-          battery_health: 95,
-          cost_price_usd: batchConfig.unit_cost_usd,
-          suggested_price_usd: batchConfig.suggested_price_usd
-        }));
-        return [...prevUnits, ...additional];
-      } else {
-        return prevUnits.slice(0, newQty);
-      }
-    });
+    // Reduzindo: nunca apagar silenciosamente linhas já preenchidas
+    const toRemove = targetItem.units.slice(newQty);
+    const hasFilledData = toRemove.some(u => (u.imei || '').trim() !== '');
+    if (hasFilledData) {
+      const confirmed = window.confirm(
+        `Reduzir para ${newQty} unidade(s) vai remover ${toRemove.length} linha(s) já preenchida(s) neste item. Deseja continuar?`
+      );
+      if (!confirmed) return;
+    }
+    setItems(prev => prev.map(it => (it.id === itemId ? { ...it, units: it.units.slice(0, newQty) } : it)));
   };
 
-  // Quando o custo padrão do lote muda, atualiza unidades que ainda usavam o padrão antigo
-  const handleBatchCostChange = (newCost) => {
-    setBatchConfig(prev => ({ ...prev, unit_cost_usd: newCost }));
-    setUnits(prevUnits => prevUnits.map(u => ({
-      ...u,
-      cost_price_usd: newCost
-    })));
-  };
-
-  // Quando o preço sugerido do lote muda, propaga para as unidades
-  const handleBatchPriceChange = (newPrice) => {
-    setBatchConfig(prev => ({ ...prev, suggested_price_usd: newPrice }));
-    setUnits(prevUnits => prevUnits.map(u => ({
-      ...u,
-      suggested_price_usd: newPrice
-    })));
-  };
-
-  // Atualização individual de uma unidade
-  const handleUpdateUnit = (index, field, value) => {
-    setUnits(prev => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
-      return updated;
-    });
+  // Atualização individual de uma unidade dentro de um item
+  const handleUpdateUnit = (itemId, unitIndex, field, value) => {
+    setItems(prev => prev.map(it => {
+      if (it.id !== itemId) return it;
+      const updatedUnits = [...it.units];
+      updatedUnits[unitIndex] = { ...updatedUnits[unitIndex], [field]: value };
+      return { ...it, units: updatedUnits };
+    }));
     setSubmitError('');
   };
 
-  // Aplicar colagem de IMEIs em massa
+  // Adiciona outro modelo/configuração ao MESMO lote (não cria novo lote, não salva, não navega)
+  const handleAddItem = () => {
+    setItems(prev => [...prev, createDefaultItem(grades[0]?.id || '')]);
+  };
+
+  // Remove um item/configuração do lote (com confirmação se já houver IMEIs preenchidos)
+  const handleRemoveItem = (itemId) => {
+    if (items.length <= 1) {
+      setSubmitError('O lote precisa ter ao menos um item/configuração.');
+      return;
+    }
+    const target = items.find(it => it.id === itemId);
+    const hasFilledData = target?.units.some(u => (u.imei || '').trim() !== '');
+    if (hasFilledData) {
+      const confirmed = window.confirm(
+        `O item ${target.model} ${target.storage} já possui IMEIs preenchidos. Remover mesmo assim?`
+      );
+      if (!confirmed) return;
+    }
+    setItems(prev => prev.filter(it => it.id !== itemId));
+    setSubmitError('');
+  };
+
+  // Aplicar colagem de IMEIs em massa — sempre restrita ao item de origem
   const handleApplyPastedImeis = () => {
-    if (!pastedImeisText.trim()) return;
+    if (!pastedImeisText.trim() || !pasteTargetItemId) return;
 
     const rawList = pastedImeisText
       .split(/[\n,;\t\r\s]+/)
@@ -163,93 +197,90 @@ export const StockEntryModule = ({
 
     if (rawList.length === 0) return;
 
-    // Se houver mais IMEIs colados que a quantidade atual do lote, expande o lote
-    const neededCount = Math.max(units.length, rawList.length);
-    setBatchConfig(prev => ({ ...prev, quantity: neededCount }));
-
-    setUnits(() => {
+    setItems(prev => prev.map(it => {
+      if (it.id !== pasteTargetItemId) return it;
+      const neededCount = Math.max(it.units.length, rawList.length);
       const newUnits = [];
       for (let i = 0; i < neededCount; i++) {
-        const existing = units[i] || {
-          id: `unit-${Date.now()}-${i}`,
-          color: 'Meia-noite',
-          battery_health: 95,
-          cost_price_usd: batchConfig.unit_cost_usd,
-          suggested_price_usd: batchConfig.suggested_price_usd
-        };
-        newUnits.push({
-          ...existing,
-          imei: rawList[i] || existing.imei || ''
-        });
+        const existing = it.units[i] || createEmptyUnit(it.unit_cost_usd, it.suggested_price_usd);
+        newUnits.push({ ...existing, imei: rawList[i] || existing.imei || '' });
       }
-      return newUnits;
-    });
+      return { ...it, units: newUnits };
+    }));
 
     setIsPasteModalOpen(false);
+    setPasteTargetItemId(null);
     setPastedImeisText('');
   };
 
-  // Conjunto de IMEIs cadastrados no banco para detecção em tempo real
+  // Conjunto de IMEIs já cadastrados no banco para detecção em tempo real
   const existingImeiSet = useMemo(() => {
     return new Set(devices.map(d => (d.imei || '').trim().toLowerCase()));
   }, [devices]);
 
-  // Análise de validação em tempo real das unidades
-  const unitsValidation = useMemo(() => {
-    const seenInBatch = new Map();
+  // Contagem de ocorrências de cada IMEI dentro do lote inteiro (entre todos os itens)
+  const imeiCountInBatch = useMemo(() => {
+    const map = new Map();
+    items.forEach(it => it.units.forEach(u => {
+      const clean = (u.imei || '').trim().toLowerCase();
+      if (!clean) return;
+      map.set(clean, (map.get(clean) || 0) + 1);
+    }));
+    return map;
+  }, [items]);
+
+  // Validação global do lote inteiro (todos os itens, todas as unidades)
+  const batchValidation = useMemo(() => {
     const errors = [];
-    let emptyCount = 0;
-    let duplicateInBatchCount = 0;
-    let alreadyInDbCount = 0;
+    let totalUnits = 0;
+    let filledCount = 0;
+    let hasBlockingError = false;
 
-    units.forEach((u, idx) => {
-      const cleanImei = (u.imei || '').trim().toLowerCase();
-      const rowNum = idx + 1;
+    items.forEach((item, itemIdx) => {
+      item.units.forEach((unit, unitIdx) => {
+        totalUnits++;
+        const cleanImei = (unit.imei || '').trim().toLowerCase();
+        const label = `Item ${itemIdx + 1} (${item.model} ${item.storage}), Unidade #${unitIdx + 1}`;
 
-      if (!cleanImei) {
-        emptyCount++;
-        errors.push(`Unidade #${rowNum}: IMEI não preenchido.`);
-      } else {
+        if (!cleanImei) {
+          errors.push(`${label}: IMEI não preenchido.`);
+          hasBlockingError = true;
+          return;
+        }
+        filledCount++;
+
         if (existingImeiSet.has(cleanImei)) {
-          alreadyInDbCount++;
-          errors.push(`Unidade #${rowNum} (${u.imei}): IMEI já existe no sistema.`);
+          errors.push(`${label} (${unit.imei}): IMEI já existe no sistema.`);
+          hasBlockingError = true;
         }
-
-        if (seenInBatch.has(cleanImei)) {
-          duplicateInBatchCount++;
-          errors.push(`Unidade #${rowNum} (${u.imei}): IMEI duplicado no mesmo lote (repetido com unidade #${seenInBatch.get(cleanImei)}).`);
-        } else {
-          seenInBatch.set(cleanImei, rowNum);
+        if ((imeiCountInBatch.get(cleanImei) || 0) > 1) {
+          errors.push(`${label} (${unit.imei}): IMEI duplicado dentro do mesmo lote.`);
+          hasBlockingError = true;
         }
-      }
+      });
     });
 
-    const isValid = emptyCount === 0 && duplicateInBatchCount === 0 && alreadyInDbCount === 0;
-
     return {
-      isValid,
-      emptyCount,
-      duplicateInBatchCount,
-      alreadyInDbCount,
-      filledCount: units.length - emptyCount,
+      isValid: !hasBlockingError && totalUnits > 0,
+      totalUnits,
+      filledCount,
       errors
     };
-  }, [units, existingImeiSet]);
+  }, [items, existingImeiSet, imeiCountInBatch]);
 
-  // Custo total do lote
+  // Totais do lote inteiro (soma de todos os itens)
   const batchTotalCost = useMemo(() => {
-    return units.reduce((acc, u) => acc + (parseFloat(u.cost_price_usd) || 0), 0);
-  }, [units]);
+    return items.reduce((acc, it) => acc + it.units.reduce((s, u) => s + (parseFloat(u.cost_price_usd) || 0), 0), 0);
+  }, [items]);
 
-  // Preço sugerido total do lote
   const batchTotalSuggestedPrice = useMemo(() => {
-    return units.reduce((acc, u) => acc + (parseFloat(u.suggested_price_usd) || 0), 0);
-  }, [units]);
+    return items.reduce((acc, it) => acc + it.units.reduce((s, u) => s + (parseFloat(u.suggested_price_usd) || 0), 0), 0);
+  }, [items]);
 
-  // Submissão da Entrada Manual em Lote
+  // Submissão do lote inteiro (todos os itens de uma vez, transacional no backend)
   const handleConfirmBatchEntry = async () => {
-    if (!unitsValidation.isValid) {
-      setSubmitError(unitsValidation.errors[0] || 'Corrija os erros nas unidades antes de confirmar.');
+    if (!batchValidation.isValid) {
+      setSubmitError(batchValidation.errors[0] || 'Corrija os erros nas unidades antes de confirmar.');
       return;
     }
 
@@ -257,43 +288,27 @@ export const StockEntryModule = ({
     setSubmitError('');
 
     try {
-      const payload = {
-        ...batchConfig,
-        quantity: units.length,
-        grade_id: batchConfig.grade_id || grades[0]?.id
-      };
+      const itemsPayload = items.map(it => ({
+        model: it.model,
+        storage: it.storage,
+        grade_id: it.grade_id || grades[0]?.id,
+        unit_cost_usd: it.unit_cost_usd,
+        suggested_price_usd: it.suggested_price_usd,
+        units: it.units
+      }));
 
-      const result = await onConfirmEntry(payload, units);
+      await onConfirmEntry(batchHeader, itemsPayload);
 
       setSuccessBanner({
         type: 'manual',
-        batchCode: batchConfig.reference_code,
-        model: batchConfig.model,
-        storage: batchConfig.storage,
-        quantity: units.length,
+        batchCode: batchHeader.reference_code,
+        totalItems: items.length,
+        quantity: batchValidation.totalUnits,
         totalCost: batchTotalCost
       });
 
-      // Reinicia o formulário com novo código de lote
-      setBatchConfig({
-        reference_code: generateBatchCode(),
-        model: 'iPhone 13',
-        storage: '128GB',
-        grade_id: grades[0]?.id || '',
-        unit_cost_usd: '350.00',
-        suggested_price_usd: '430.00',
-        quantity: 3,
-        notes: ''
-      });
-
-      setUnits(Array.from({ length: 3 }, (_, idx) => ({
-        id: `unit-${Date.now()}-${idx}`,
-        imei: '',
-        color: 'Meia-noite',
-        battery_health: 95,
-        cost_price_usd: '350.00',
-        suggested_price_usd: '430.00'
-      })));
+      setBatchHeader({ reference_code: generateBatchCode(), notes: '' });
+      setItems([createDefaultItem(grades[0]?.id || '')]);
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
@@ -422,6 +437,8 @@ export const StockEntryModule = ({
     }
   };
 
+  const pasteTargetItem = items.find(it => it.id === pasteTargetItemId);
+
   return (
     <div className="space-y-6 animate-fade-in pb-16">
       {/* Top Header & Tabs Selection */}
@@ -432,7 +449,7 @@ export const StockEntryModule = ({
             Entrada & Importação de Estoque
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Cadastre novos aparelhos manualmente em lote ou importe planilhas Excel/CSV com validação atômica
+            Cadastre novos aparelhos manualmente em lote (com vários modelos no mesmo lote) ou importe planilhas Excel/CSV com validação atômica
           </p>
         </div>
 
@@ -481,7 +498,8 @@ export const StockEntryModule = ({
                 {successBanner.type === 'manual' ? 'Entrada de Estoque Realizada com Sucesso!' : 'Planilha Importada com Sucesso!'}
               </div>
               <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
-                Lote <strong>{successBanner.batchCode}</strong> • {successBanner.quantity} aparelhos cadastrados como <strong>Disponível</strong> ({formatUSD(successBanner.totalCost)} de custo total).
+                Lote <strong>{successBanner.batchCode}</strong> • {successBanner.totalItems ? `${successBanner.totalItems} configurações • ` : ''}
+                {successBanner.quantity} aparelhos cadastrados como <strong>Disponível</strong> ({formatUSD(successBanner.totalCost)} de custo total).
               </div>
             </div>
           </div>
@@ -506,11 +524,11 @@ export const StockEntryModule = ({
       )}
 
       {/* ===================================================================== */}
-      {/* ABA 1: ENTRADA MANUAL EM LOTE                                         */}
+      {/* ABA 1: ENTRADA MANUAL EM LOTE (MULTI-MODELO)                          */}
       {/* ===================================================================== */}
       {activeTab === 'manual' && (
         <div className="space-y-6">
-          {/* SEÇÃO 1: CONFIGURAÇÃO DO LOTE */}
+          {/* DADOS DO LOTE (cabeçalho compartilhado por todos os itens) */}
           <Card className="p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -518,318 +536,358 @@ export const StockEntryModule = ({
                   1
                 </span>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  Configuração do Lote de Entrada
+                  Dados do Lote
                 </h3>
               </div>
               <span className="text-xs font-semibold text-slate-400">
-                Os valores padrão serão herdados automaticamente pelas unidades
+                Um lote pode conter vários modelos, armazenamentos e grades diferentes
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
                 label="Código / Referência do Lote"
                 required
-                value={batchConfig.reference_code}
-                onChange={(e) => setBatchConfig({ ...batchConfig, reference_code: e.target.value })}
+                value={batchHeader.reference_code}
+                onChange={(e) => setBatchHeader({ ...batchHeader, reference_code: e.target.value })}
                 placeholder="Ex: LOTE-2026-3232"
               />
-
-              <Select
-                label="Modelo do iPhone"
-                value={batchConfig.model}
-                onChange={(e) => setBatchConfig({ ...batchConfig, model: e.target.value })}
-                options={IPHONE_MODELS.map(m => ({ value: m, label: m }))}
-              />
-
-              <Select
-                label="Armazenamento"
-                value={batchConfig.storage}
-                onChange={(e) => setBatchConfig({ ...batchConfig, storage: e.target.value })}
-                options={STORAGE_OPTIONS.map(s => ({ value: s, label: s }))}
-              />
-
-              <Select
-                label="Grade Estética"
-                value={batchConfig.grade_id}
-                onChange={(e) => setBatchConfig({ ...batchConfig, grade_id: e.target.value })}
-                options={grades.map(g => ({ value: g.id, label: `Grade ${g.name}` }))}
-              />
-
-              <CurrencyInput
-                label="Custo Unitário Padrão (USD)"
-                value={batchConfig.unit_cost_usd}
-                onChange={handleBatchCostChange}
-                currency="USD"
-              />
-
-              <CurrencyInput
-                label="Preço Sugerido de Venda (USD)"
-                value={batchConfig.suggested_price_usd}
-                onChange={handleBatchPriceChange}
-                currency="USD"
-              />
-
-              <Input
-                label="Quantidade de Aparelhos"
-                type="number"
-                min="1"
-                max="500"
-                required
-                value={batchConfig.quantity}
-                onChange={(e) => handleQuantityChange(e.target.value)}
-              />
-
               <Input
                 label="Observações / Fornecedor"
-                value={batchConfig.notes}
-                onChange={(e) => setBatchConfig({ ...batchConfig, notes: e.target.value })}
-                placeholder="Ex: Lote Miami Grade A+, NF 104..."
+                value={batchHeader.notes}
+                onChange={(e) => setBatchHeader({ ...batchHeader, notes: e.target.value })}
+                placeholder="Ex: Lote Miami, NF 104..."
               />
             </div>
           </Card>
 
-          {/* SEÇÃO 2: CADASTRO INDIVIDUAL DAS UNIDADES */}
-          <Card className="p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-slate-900 text-white dark:bg-white dark:text-slate-900 flex items-center justify-center text-xs font-black">
-                  2
-                </span>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    Cadastro Individual das Unidades ({units.length} {units.length === 1 ? 'aparelho' : 'aparelhos'})
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Preencha os IMEIs/Seriais. Custo e Preço podem ser alterados individualmente.
-                  </p>
+          {/* ITENS / CONFIGURAÇÕES DO LOTE */}
+          {items.map((item, itemIdx) => {
+            const itemFilledCount = item.units.filter(u => (u.imei || '').trim() !== '').length;
+
+            return (
+              <Card key={item.id} className="p-6 border-l-4 border-l-slate-900 dark:border-l-cyan-500">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-white/[0.08] text-xs font-black text-slate-700 dark:text-slate-200">
+                      ITEM {itemIdx + 1}
+                    </span>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      {item.model} • {item.storage} • Grade {getGradeName(item.grade_id)}
+                    </h3>
+                  </div>
+                  {items.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveItem(item.id)}
+                      icon={Trash2}
+                      className="text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                    >
+                      Remover Item
+                    </Button>
+                  )}
                 </div>
-              </div>
 
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsPasteModalOpen(true)}
-                  icon={ClipboardPaste}
-                >
-                  Colar Múltiplos IMEIs
-                </Button>
-              </div>
-            </div>
+                {/* Configuração do Item */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                  <Select
+                    label="Modelo do iPhone"
+                    value={item.model}
+                    onChange={(e) => handleUpdateItemField(item.id, 'model', e.target.value)}
+                    options={IPHONE_MODELS.map(m => ({ value: m, label: m }))}
+                  />
+                  <Select
+                    label="Armazenamento"
+                    value={item.storage}
+                    onChange={(e) => handleUpdateItemField(item.id, 'storage', e.target.value)}
+                    options={STORAGE_OPTIONS.map(s => ({ value: s, label: s }))}
+                  />
+                  <Select
+                    label="Grade Estética"
+                    value={item.grade_id}
+                    onChange={(e) => handleUpdateItemField(item.id, 'grade_id', e.target.value)}
+                    options={grades.map(g => ({ value: g.id, label: `Grade ${g.name}` }))}
+                  />
+                  <Input
+                    label="Quantidade de Aparelhos"
+                    type="number"
+                    min="1"
+                    max="500"
+                    required
+                    value={item.units.length}
+                    onChange={(e) => handleItemQuantityChange(item.id, e.target.value)}
+                  />
+                </div>
 
-            {/* Desktop Table View */}
-            <div className="hidden md:block border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
-              <Table headers={['#', 'IMEI / Serial (Único)', 'Cor', 'Bateria (%)', 'Custo (USD)', 'Preço Sugerido (USD)', 'Status']}>
-                {units.map((unit, idx) => {
-                  const cleanImei = (unit.imei || '').trim().toLowerCase();
-                  const isDbDuplicate = cleanImei && existingImeiSet.has(cleanImei);
-                  const isBatchDuplicate = cleanImei && units.filter(u => (u.imei || '').trim().toLowerCase() === cleanImei).length > 1;
-                  const hasError = isDbDuplicate || isBatchDuplicate;
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 mb-4 border-b border-slate-200/60 dark:border-slate-700/60">
+                  <CurrencyInput
+                    label="Custo Unitário Padrão (USD)"
+                    value={item.unit_cost_usd}
+                    onChange={(val) => handleItemCostChange(item.id, val)}
+                    currency="USD"
+                  />
+                  <CurrencyInput
+                    label="Preço Sugerido de Venda (USD)"
+                    value={item.suggested_price_usd}
+                    onChange={(val) => handleItemPriceChange(item.id, val)}
+                    currency="USD"
+                  />
+                </div>
 
-                  return (
-                    <TableRow key={unit.id}>
-                      <TableCell className="font-bold text-slate-400 w-12 text-center">
-                        {idx + 1}
-                      </TableCell>
+                {/* Unidades deste Item */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Unidades deste Item ({itemFilledCount}/{item.units.length} IMEIs preenchidos)
+                  </h4>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setPasteTargetItemId(item.id);
+                      setIsPasteModalOpen(true);
+                    }}
+                    icon={ClipboardPaste}
+                  >
+                    Colar Múltiplos IMEIs
+                  </Button>
+                </div>
 
-                      {/* IMEI Input */}
-                      <TableCell className="w-56">
-                        <div className="space-y-1">
-                          <input
-                            type="text"
-                            placeholder="354890123456789"
-                            value={unit.imei}
-                            onChange={(e) => handleUpdateUnit(idx, 'imei', e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
-                            className={`w-full px-3 py-1.5 rounded-xl font-mono text-xs font-bold transition-all ${
-                              hasError
-                                ? 'bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-500 text-rose-900 dark:text-rose-200 focus:outline-rose-600'
-                                : unit.imei
-                                  ? 'bg-slate-100 dark:bg-white/[0.07] border border-slate-300 dark:border-white/15 text-slate-900 dark:text-white'
-                                  : 'bg-white dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white'
-                            }`}
-                          />
-                          {isDbDuplicate && (
-                            <div className="text-[10px] font-bold text-rose-500 flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3" /> Já existe no sistema
+                {/* Desktop Table View */}
+                <div className="hidden md:block border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+                  <Table headers={['#', 'IMEI / Serial (Único)', 'Cor', 'Bateria (%)', 'Custo (USD)', 'Preço Sugerido (USD)', 'Status']}>
+                    {item.units.map((unit, idx) => {
+                      const cleanImei = (unit.imei || '').trim().toLowerCase();
+                      const isDbDuplicate = cleanImei && existingImeiSet.has(cleanImei);
+                      const isBatchDuplicate = cleanImei && (imeiCountInBatch.get(cleanImei) || 0) > 1;
+                      const hasError = isDbDuplicate || isBatchDuplicate;
+
+                      return (
+                        <TableRow key={unit.id}>
+                          <TableCell className="font-bold text-slate-400 w-12 text-center">
+                            {idx + 1}
+                          </TableCell>
+
+                          <TableCell className="w-56">
+                            <div className="space-y-1">
+                              <input
+                                type="text"
+                                placeholder="354890123456789"
+                                value={unit.imei}
+                                onChange={(e) => handleUpdateUnit(item.id, idx, 'imei', e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
+                                className={`w-full px-3 py-1.5 rounded-xl font-mono text-xs font-bold transition-all ${
+                                  hasError
+                                    ? 'bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-500 text-rose-900 dark:text-rose-200 focus:outline-rose-600'
+                                    : unit.imei
+                                      ? 'bg-slate-100 dark:bg-white/[0.07] border border-slate-300 dark:border-white/15 text-slate-900 dark:text-white'
+                                      : 'bg-white dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white'
+                                }`}
+                              />
+                              {isDbDuplicate && (
+                                <div className="text-[10px] font-bold text-rose-500 flex items-center gap-1">
+                                  <AlertCircle className="w-3 h-3" /> Já existe no sistema
+                                </div>
+                              )}
+                              {!isDbDuplicate && isBatchDuplicate && (
+                                <div className="text-[10px] font-bold text-amber-500 flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3" /> Duplicado no lote
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {!isDbDuplicate && isBatchDuplicate && (
-                            <div className="text-[10px] font-bold text-amber-500 flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3" /> Duplicado no lote
+                          </TableCell>
+
+                          <TableCell className="w-40">
+                            <select
+                              value={unit.color}
+                              onChange={(e) => handleUpdateUnit(item.id, idx, 'color', e.target.value)}
+                              className="w-full px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-slate-100"
+                            >
+                              {COLOR_OPTIONS.map(c => (
+                                <option key={c} value={c} className="dark:bg-slate-900">{c}</option>
+                              ))}
+                            </select>
+                          </TableCell>
+
+                          <TableCell className="w-28">
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={unit.battery_health}
+                                onChange={(e) => handleUpdateUnit(item.id, idx, 'battery_health', parseInt(e.target.value, 10) || 0)}
+                                className="w-16 px-2 py-1.5 rounded-xl text-xs font-bold text-center bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
+                              />
+                              <span className="text-xs text-slate-400 font-semibold">%</span>
                             </div>
-                          )}
+                          </TableCell>
+
+                          <TableCell className="w-36">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={unit.cost_price_usd}
+                              onChange={(e) => handleUpdateUnit(item.id, idx, 'cost_price_usd', e.target.value)}
+                              className="w-28 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
+                            />
+                          </TableCell>
+
+                          <TableCell className="w-36">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={unit.suggested_price_usd}
+                              onChange={(e) => handleUpdateUnit(item.id, idx, 'suggested_price_usd', e.target.value)}
+                              className="w-28 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
+                            />
+                          </TableCell>
+
+                          <TableCell className="w-20 text-center">
+                            {unit.imei && !hasError ? (
+                              <span className="inline-flex p-1 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
+                                <Check className="w-3.5 h-3.5" />
+                              </span>
+                            ) : hasError ? (
+                              <span className="inline-flex p-1 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+                                <X className="w-3.5 h-3.5" />
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-semibold">Pendente</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </Table>
+                </div>
+
+                {/* Mobile Cards View */}
+                <div className="grid grid-cols-1 gap-3 md:hidden">
+                  {item.units.map((unit, idx) => {
+                    const cleanImei = (unit.imei || '').trim().toLowerCase();
+                    const isDbDuplicate = cleanImei && existingImeiSet.has(cleanImei);
+                    const isBatchDuplicate = cleanImei && (imeiCountInBatch.get(cleanImei) || 0) > 1;
+
+                    return (
+                      <div
+                        key={unit.id}
+                        className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                            Unidade #{idx + 1}
+                          </span>
+                          <span className="text-[11px] font-semibold text-slate-400">
+                            {item.model} • {item.storage}
+                          </span>
                         </div>
-                      </TableCell>
 
-                      {/* Cor */}
-                      <TableCell className="w-40">
-                        <select
-                          value={unit.color}
-                          onChange={(e) => handleUpdateUnit(idx, 'color', e.target.value)}
-                          className="w-full px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-slate-100"
-                        >
-                          {COLOR_OPTIONS.map(c => (
-                            <option key={c} value={c} className="dark:bg-slate-900">{c}</option>
-                          ))}
-                        </select>
-                      </TableCell>
+                        <Input
+                          label="IMEI / Serial"
+                          placeholder="354890123456789"
+                          value={unit.imei}
+                          onChange={(e) => handleUpdateUnit(item.id, idx, 'imei', e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
+                          error={isDbDuplicate ? 'Já cadastrado no sistema' : isBatchDuplicate ? 'Duplicado no lote' : ''}
+                        />
 
-                      {/* Bateria */}
-                      <TableCell className="w-28">
-                        <div className="flex items-center gap-1">
-                          <input
+                        <div className="grid grid-cols-2 gap-2">
+                          <Select
+                            label="Cor"
+                            value={unit.color}
+                            onChange={(e) => handleUpdateUnit(item.id, idx, 'color', e.target.value)}
+                            options={COLOR_OPTIONS.map(c => ({ value: c, label: c }))}
+                          />
+                          <Input
+                            label="Saúde Bateria (%)"
                             type="number"
                             min="0"
                             max="100"
                             value={unit.battery_health}
-                            onChange={(e) => handleUpdateUnit(idx, 'battery_health', parseInt(e.target.value, 10) || 0)}
-                            className="w-16 px-2 py-1.5 rounded-xl text-xs font-bold text-center bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
+                            onChange={(e) => handleUpdateUnit(item.id, idx, 'battery_health', parseInt(e.target.value, 10) || 0)}
                           />
-                          <span className="text-xs text-slate-400 font-semibold">%</span>
                         </div>
-                      </TableCell>
 
-                      {/* Custo Individual */}
-                      <TableCell className="w-36">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={unit.cost_price_usd}
-                          onChange={(e) => handleUpdateUnit(idx, 'cost_price_usd', e.target.value)}
-                          className="w-28 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
-                        />
-                      </TableCell>
+                        <div className="grid grid-cols-2 gap-2">
+                          <CurrencyInput
+                            label="Custo (USD)"
+                            value={unit.cost_price_usd}
+                            onChange={(val) => handleUpdateUnit(item.id, idx, 'cost_price_usd', val)}
+                            currency="USD"
+                          />
+                          <CurrencyInput
+                            label="Preço Sugerido (USD)"
+                            value={unit.suggested_price_usd}
+                            onChange={(val) => handleUpdateUnit(item.id, idx, 'suggested_price_usd', val)}
+                            currency="USD"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            );
+          })}
 
-                      {/* Preço Sugerido Individual */}
-                      <TableCell className="w-36">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={unit.suggested_price_usd}
-                          onChange={(e) => handleUpdateUnit(idx, 'suggested_price_usd', e.target.value)}
-                          className="w-28 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
-                        />
-                      </TableCell>
+          {/* ADICIONAR OUTRO MODELO (mesmo lote — nunca cria lote novo) */}
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={handleAddItem}
+            icon={Plus}
+            className="w-full border-dashed border-2 py-4"
+          >
+            Adicionar Outro Modelo ao Lote
+          </Button>
 
-                      {/* Status Icon */}
-                      <TableCell className="w-20 text-center">
-                        {unit.imei && !hasError ? (
-                          <span className="inline-flex p-1 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-                            <Check className="w-3.5 h-3.5" />
-                          </span>
-                        ) : hasError ? (
-                          <span className="inline-flex p-1 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
-                            <X className="w-3.5 h-3.5" />
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-400 font-semibold">Pendente</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </Table>
-            </div>
-
-            {/* Mobile Cards View */}
-            <div className="grid grid-cols-1 gap-3 md:hidden">
-              {units.map((unit, idx) => {
-                const cleanImei = (unit.imei || '').trim().toLowerCase();
-                const isDbDuplicate = cleanImei && existingImeiSet.has(cleanImei);
-                const isBatchDuplicate = cleanImei && units.filter(u => (u.imei || '').trim().toLowerCase() === cleanImei).length > 1;
-
-                return (
-                  <div 
-                    key={unit.id}
-                    className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-extrabold text-slate-900 dark:text-white">
-                        Unidade #{idx + 1}
-                      </span>
-                      <span className="text-[11px] font-semibold text-slate-400">
-                        {batchConfig.model} • {batchConfig.storage}
-                      </span>
-                    </div>
-
-                    <Input
-                      label="IMEI / Serial"
-                      placeholder="354890123456789"
-                      value={unit.imei}
-                      onChange={(e) => handleUpdateUnit(idx, 'imei', e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
-                      error={isDbDuplicate ? 'Já cadastrado no sistema' : isBatchDuplicate ? 'Duplicado no lote' : ''}
-                    />
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <Select
-                        label="Cor"
-                        value={unit.color}
-                        onChange={(e) => handleUpdateUnit(idx, 'color', e.target.value)}
-                        options={COLOR_OPTIONS.map(c => ({ value: c, label: c }))}
-                      />
-                      <Input
-                        label="Saúde Bateria (%)"
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={unit.battery_health}
-                        onChange={(e) => handleUpdateUnit(idx, 'battery_health', parseInt(e.target.value, 10) || 0)}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <CurrencyInput
-                        label="Custo (USD)"
-                        value={unit.cost_price_usd}
-                        onChange={(val) => handleUpdateUnit(idx, 'cost_price_usd', val)}
-                        currency="USD"
-                      />
-                      <CurrencyInput
-                        label="Preço Sugerido (USD)"
-                        value={unit.suggested_price_usd}
-                        onChange={(val) => handleUpdateUnit(idx, 'suggested_price_usd', val)}
-                        currency="USD"
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-
-          {/* SEÇÃO 3: RESUMO E CONFIRMAÇÃO */}
+          {/* RESUMO DO LOTE INTEIRO */}
           <Card className="p-6">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-              {/* Métricas do Lote */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1">
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-[11px] font-semibold text-slate-400">Total de Aparelhos</span>
-                  <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
-                    {units.length} un.
+              <div className="flex-1 space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[11px] font-semibold text-slate-400">Configurações</span>
+                    <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
+                      {items.length}
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[11px] font-semibold text-slate-400">Total de Aparelhos</span>
+                    <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
+                      {batchValidation.totalUnits} un.
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[11px] font-semibold text-slate-400">IMEIs Preenchidos</span>
+                    <div className={`text-lg font-black mt-0.5 ${
+                      batchValidation.filledCount === batchValidation.totalUnits ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-500'
+                    }`}>
+                      {batchValidation.filledCount} / {batchValidation.totalUnits}
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[11px] font-semibold text-slate-400">Custo Total do Lote</span>
+                    <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
+                      {formatUSD(batchTotalCost)}
+                    </div>
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-[11px] font-semibold text-slate-400">IMEIs Preenchidos</span>
-                  <div className={`text-lg font-black mt-0.5 ${
-                    unitsValidation.filledCount === units.length ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-500'
-                  }`}>
-                    {unitsValidation.filledCount} / {units.length}
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-[11px] font-semibold text-slate-400">Custo Total do Lote</span>
-                  <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
-                    {formatUSD(batchTotalCost)}
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-[11px] font-semibold text-slate-400">Preço Sugerido Total</span>
-                  <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
-                    {formatUSD(batchTotalSuggestedPrice)}
+                {/* Resumo por Item */}
+                <div className="space-y-1 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Resumo por Item</span>
+                  {items.map(it => (
+                    <div key={it.id} className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+                      <span>{it.model} {it.storage} • Grade {getGradeName(it.grade_id)}</span>
+                      <span className="font-bold">{it.units.length} {it.units.length === 1 ? 'unidade' : 'unidades'}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white pt-1">
+                    <span>Preço Sugerido Total</span>
+                    <span>{formatUSD(batchTotalSuggestedPrice)}</span>
                   </div>
                 </div>
               </div>
@@ -847,7 +905,7 @@ export const StockEntryModule = ({
                   variant="primary"
                   size="lg"
                   onClick={handleConfirmBatchEntry}
-                  disabled={!unitsValidation.isValid || isSubmitting}
+                  disabled={!batchValidation.isValid || isSubmitting}
                   icon={CheckCircle2}
                   className="w-full sm:w-auto px-8"
                 >
@@ -974,7 +1032,7 @@ export const StockEntryModule = ({
               <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden max-h-96 overflow-y-auto">
                 <Table headers={['Linha', 'Modelo & Armazenamento', 'Grade', 'Cor', 'Bateria', 'IMEI', 'Custo (USD)', 'Status / Diagnóstico']}>
                   {parsedRows.map((row, idx) => {
-                    const validationItem = importValidation.validRows.find(r => r.rowNumber === row.rowNumber) || 
+                    const validationItem = importValidation.validRows.find(r => r.rowNumber === row.rowNumber) ||
                                            importValidation.errorRows.find(r => r.rowNumber === row.rowNumber);
                     const isValid = validationItem?.isValid;
 
@@ -1053,12 +1111,15 @@ export const StockEntryModule = ({
         </div>
       )}
 
-      {/* MODAL PARA COLAR MÚLTIPLOS IMEIS */}
+      {/* MODAL PARA COLAR MÚLTIPLOS IMEIS (restrito ao item de origem) */}
       <Modal
         isOpen={isPasteModalOpen}
-        onClose={() => setIsPasteModalOpen(false)}
+        onClose={() => {
+          setIsPasteModalOpen(false);
+          setPasteTargetItemId(null);
+        }}
         title="Colar Lista de IMEIs"
-        subtitle="Cole múltiplos IMEIs separados por quebra de linha, vírgula ou espaço para preenchimento rápido."
+        subtitle={pasteTargetItem ? `Aplicando ao item: ${pasteTargetItem.model} ${pasteTargetItem.storage} — cole múltiplos IMEIs separados por quebra de linha, vírgula ou espaço.` : ''}
       >
         <div className="space-y-4">
           <textarea
@@ -1078,7 +1139,10 @@ export const StockEntryModule = ({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setIsPasteModalOpen(false)}
+                onClick={() => {
+                  setIsPasteModalOpen(false);
+                  setPasteTargetItemId(null);
+                }}
               >
                 Cancelar
               </Button>
@@ -1088,7 +1152,7 @@ export const StockEntryModule = ({
                 onClick={handleApplyPastedImeis}
                 disabled={!pastedImeisText.trim()}
               >
-                Aplicar às Unidades
+                Aplicar ao Item
               </Button>
             </div>
           </div>

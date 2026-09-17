@@ -1,24 +1,23 @@
 import React, { useState, useRef } from 'react';
-import { 
-  ScanLine, 
-  CheckCircle2, 
-  AlertCircle, 
-  ArrowRight, 
-  Smartphone, 
-  Check, 
-  Sparkles,
-  ShoppingBag
+import {
+  ScanLine,
+  CheckCircle2,
+  AlertCircle,
+  ArrowRight,
+  Check
 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Input, Select } from '../ui/Input';
-import { Table, TableRow, TableCell } from '../ui/Table';
-import { formatUSD, formatImei, getBatteryHealthBadge } from '../../lib/formatters';
+import { FinalizeSaleModal } from '../sales/FinalizeSaleModal';
+import { formatImei, getBatteryHealthBadge } from '../../lib/formatters';
 
 export const SeparationModule = ({
   orders = [],
+  exchangeRate = 5.48,
   onMarkDeviceSeparated,
+  onFinalizeSale,
   onNavigate
 }) => {
   // Apenas pedidos reservados ou em separação
@@ -27,6 +26,7 @@ export const SeparationModule = ({
   const [selectedOrderId, setSelectedOrderId] = useState(activeOrders[0]?.id || '');
   const [scannedImei, setScannedImei] = useState('');
   const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', message: '' }
+  const [orderToFinalize, setOrderToFinalize] = useState(null);
   const scanInputRef = useRef(null);
 
   const currentOrder = orders.find(o => o.id === selectedOrderId);
@@ -179,11 +179,11 @@ export const SeparationModule = ({
                     variant="primary"
                     size="md"
                     className="w-full bg-[#111418] text-white dark:bg-white dark:text-slate-900 font-bold"
-                    onClick={() => onNavigate('payments', { orderId: currentOrder.id })}
+                    onClick={() => setOrderToFinalize(currentOrder)}
                     icon={ArrowRight}
                     iconPosition="right"
                   >
-                    Prosseguir para Pagamento & Finalização
+                    Finalizar Venda
                   </Button>
                 </div>
               )}
@@ -247,6 +247,15 @@ export const SeparationModule = ({
           </div>
         </div>
       )}
+
+      {/* MODAL DE FINALIZAÇÃO DE VENDA (pagamento + parcelamento em uma única etapa) */}
+      <FinalizeSaleModal
+        isOpen={Boolean(orderToFinalize)}
+        order={orderToFinalize}
+        exchangeRate={exchangeRate}
+        onClose={() => setOrderToFinalize(null)}
+        onFinalizeSale={onFinalizeSale}
+      />
     </div>
   );
 };

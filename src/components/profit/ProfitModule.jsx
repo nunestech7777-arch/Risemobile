@@ -4,7 +4,6 @@ import {
   DollarSign, 
   Download, 
   Calendar, 
-  Smartphone, 
   Users,
   ShoppingBag,
   ArrowUpRight,
@@ -38,10 +37,13 @@ export const ProfitModule = ({
   const [chartViewMode, setChartViewMode] = useState('daily'); // 'daily' | 'cumulative'
   const [activeAnalysisTab, setActiveAnalysisTab] = useState('models'); // 'models' | 'retailers' | 'orders'
 
-  // Vendas estritamente finalizadas (status === 'Finalizado')
+  // Vendas concluídas (Finalizado, Parcialmente ou Totalmente Devolvida)
   const finalizedOrders = useMemo(() => {
-    return orders.filter(o => o.status === 'Finalizado');
+    return orders.filter(o => o.status === 'Finalizado' || o.status === 'Parcialmente Devolvida' || o.status === 'Totalmente Devolvida');
   }, [orders]);
+
+  // Faturamento líquido de uma venda (bruto histórico menos o que foi devolvido)
+  const getNetRevenue = (order) => (parseFloat(order.total_amount_usd) || 0) - (parseFloat(order.returned_amount_usd) || 0);
 
   // Função auxiliar para normalização de data local (YYYY-MM-DD)
   const getLocalDateString = (d) => {
@@ -149,7 +151,7 @@ export const ProfitModule = ({
 
   // CARD 1: Faturamento do Período
   const periodRevenueUSD = useMemo(() => {
-    return filteredOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount_usd) || 0), 0);
+    return filteredOrders.reduce((sum, o) => sum + getNetRevenue(o), 0);
   }, [filteredOrders]);
 
   const periodUnitsSold = useMemo(() => {
@@ -175,7 +177,7 @@ export const ProfitModule = ({
     finalizedOrders.forEach(order => {
       const d = new Date(order.finalized_at || order.created_at);
       const dStr = getLocalDateString(d);
-      const val = parseFloat(order.total_amount_usd) || 0;
+      const val = getNetRevenue(order);
       const units = order.allocated_devices?.length || 0;
 
       if (dStr === todayStr) {
@@ -213,7 +215,7 @@ export const ProfitModule = ({
       return d >= startOfMonth;
     });
 
-    const monthRevenueSoFar = thisMonthOrders.reduce((sum, o) => sum + (parseFloat(o.total_amount_usd) || 0), 0);
+    const monthRevenueSoFar = thisMonthOrders.reduce((sum, o) => sum + getNetRevenue(o), 0);
     const dailyPace = currentDay > 0 ? monthRevenueSoFar / currentDay : 0;
     const projectedTotalUSD = Math.round(dailyPace * totalDaysInMonth);
 
@@ -261,7 +263,7 @@ export const ProfitModule = ({
       const d = new Date(order.finalized_at || order.created_at);
       const key = getLocalDateString(d);
       const label = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const val = parseFloat(order.total_amount_usd) || 0;
+      const val = getNetRevenue(order);
       const units = order.allocated_devices?.length || 0;
 
       if (!daysMap.has(key)) {
@@ -364,7 +366,7 @@ export const ProfitModule = ({
 
     filteredOrders.forEach(order => {
       const orderUnits = order.allocated_devices?.length || 1;
-      const avgRevenuePerUnit = (parseFloat(order.total_amount_usd) || 0) / orderUnits;
+      const avgRevenuePerUnit = getNetRevenue(order) / orderUnits;
 
       (order.allocated_devices || []).forEach(dev => {
         const key = `${dev.model} ${dev.storage}`;
@@ -395,7 +397,7 @@ export const ProfitModule = ({
     filteredOrders.forEach(order => {
       const rName = order.retailer_name || 'Lojista Não Identificado';
       const rId = order.retailer_id || rName;
-      const val = parseFloat(order.total_amount_usd) || 0;
+      const val = getNetRevenue(order);
       const units = order.allocated_devices?.length || 0;
 
       if (!map.has(rId)) {
@@ -421,17 +423,18 @@ export const ProfitModule = ({
   // ==========================================
   const handleExportRevenue = () => {
     const data = filteredOrders.map(o => {
-      const val = parseFloat(o.total_amount_usd) || 0;
-      const paid = (o.payments || []).reduce((acc, p) => acc + (parseFloat(p.amount_usd) || 0), 0);
-      const balance = Math.max(0, val - paid);
+      const val = getNetRevenue(o);
+      const paid = parseFloat(o.paid_amount_usd) || 0;
 
       return {
         'Nº Pedido': o.order_number,
         'Lojista': o.retailer_name,
         'Qtd Peças': o.allocated_devices?.length || 0,
-        'Faturamento Realizado (USD)': val,
+        'Faturamento Bruto (USD)': parseFloat(o.total_amount_usd) || 0,
+        'Devolvido (USD)': parseFloat(o.returned_amount_usd) || 0,
+        'Faturamento Líquido (USD)': val,
         'Valor Recebido (USD)': paid,
-        'Saldo a Receber (USD)': balance,
+        'Saldo a Receber (USD)': parseFloat(o.balance_due_usd) || 0,
         'Status': o.status,
         'Data Finalização': formatDate(o.finalized_at || o.created_at, true)
       };
@@ -972,7 +975,7 @@ export const ProfitModule = ({
                     </thead>
                     <tbody className="divide-y divide-white/10 text-slate-200">
                       {filteredOrders.map((o) => {
-                        const val = parseFloat(o.total_amount_usd) || 0;
+                        const val = getNetRevenue(o);
 
                         return (
                           <tr key={o.id} className="hover:bg-white/[0.05] transition-colors">

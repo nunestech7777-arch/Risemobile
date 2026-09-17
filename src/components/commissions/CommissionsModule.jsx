@@ -5,7 +5,6 @@ import {
   Edit3, 
   Trash2, 
   Search, 
-  Smartphone, 
   DollarSign, 
   Users, 
   Building2,
@@ -24,6 +23,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Input, Select, CurrencyInput } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
+import { IPhoneIcon } from '../common/IPhoneIcon';
 import { Modal, Drawer } from '../ui/Modal';
 import { formatUSD, formatDate } from '../../lib/formatters';
 
@@ -379,7 +379,7 @@ export const CommissionsModule = ({
               Total de Peças Comissionadas
             </span>
             <div className="p-2 rounded-lg bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-cyan-300">
-              <Smartphone className="w-4 h-4" />
+              <IPhoneIcon className="w-4 h-4" />
             </div>
           </div>
           <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">

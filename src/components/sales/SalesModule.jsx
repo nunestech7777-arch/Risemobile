@@ -1,24 +1,17 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  ShoppingBag, 
-  Plus, 
-  CheckCircle2, 
-  XCircle, 
-  Clock, 
-  ScanLine, 
-  DollarSign, 
-  Trash2, 
+import {
+  Plus,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  DollarSign,
+  Trash2,
   AlertTriangle,
-  Smartphone,
-  ChevronRight,
-  ArrowRight,
   Sparkles,
   Search,
-  Filter,
-  Receipt,
-  User,
-  Check
+  Undo2
 } from 'lucide-react';
+import { IPhoneIcon } from '../common/IPhoneIcon';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -26,6 +19,8 @@ import { Input, Select, CurrencyInput } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { Modal, Drawer } from '../ui/Modal';
 import { ConfirmDialog, EmptyState } from '../ui/EmptyState';
+import { FinalizeSaleModal } from './FinalizeSaleModal';
+import { RegisterReturnModal } from './RegisterReturnModal';
 import { formatUSD, formatImei, formatDate, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
 
 const IPHONE_MODELS = [
@@ -42,13 +37,18 @@ export const SalesModule = ({
   retailers = [],
   devices = [],
   grades = [],
+  exchangeRate = 5.48,
   onReserveOrder,
   onCancelOrder,
-  onNavigate
+  onDeleteOrder,
+  onFinalizeSale,
+  onRegisterReturn
 }) => {
   const [selectedStatus, setSelectedStatus] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSale, setSelectedSale] = useState(null);
+  const [orderToFinalize, setOrderToFinalize] = useState(null);
+  const [saleToReturn, setSaleToReturn] = useState(null);
 
   // Modal Nova Venda
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -78,6 +78,11 @@ export const SalesModule = ({
 
   // Diálogo de Cancelamento
   const [saleToCancel, setSaleToCancel] = useState(null);
+
+  // Diálogo de Exclusão de Venda
+  const [saleToDelete, setSaleToDelete] = useState(null);
+  const [isDeletingOrder, setIsDeletingOrder] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // Filtragem da lista de vendas
   const filteredSales = useMemo(() => {
@@ -300,7 +305,7 @@ export const SalesModule = ({
       setSaleNotes('');
 
       if (proceedToPayment && createdSale?.id) {
-        onNavigate('payments', { orderId: createdSale.id });
+        setOrderToFinalize(createdSale);
       } else {
         setSelectedSale(createdSale);
       }
@@ -367,6 +372,8 @@ export const SalesModule = ({
               { value: 'Reservado', label: 'Reservado' },
               { value: 'Em Separação', label: 'Em Separação' },
               { value: 'Finalizado', label: 'Finalizado' },
+              { value: 'Parcialmente Devolvida', label: 'Parcialmente Devolvida' },
+              { value: 'Totalmente Devolvida', label: 'Totalmente Devolvida' },
               { value: 'Cancelado', label: 'Cancelado' }
             ]}
           />
@@ -386,10 +393,15 @@ export const SalesModule = ({
             onAction={handleOpenNewSale}
           />
         ) : (
-          <Table headers={['Venda', 'Lojista', 'Modelos & Itens', 'Total USD', 'Status', 'Data', 'Ações']}>
+          <Table headers={['Venda', 'Lojista', 'Modelos & Itens', 'Total Original', 'Devolução', 'Total Líquido', 'Status', 'Data', 'Ações']}>
             {filteredSales.map((sale) => {
-              const totalUnits = sale.items?.reduce((acc, i) => acc + (i.quantity || 1), 0) || sale.allocated_devices?.length || 0;
+              const activeUnits = sale.allocated_devices?.length ?? (sale.items?.reduce((acc, i) => acc + (i.quantity || 1), 0) || 0);
+              const returnedUnits = sale.returned_devices?.length || 0;
+              const totalUnits = activeUnits + returnedUnits;
               const statusStyle = getStatusBadge(sale.status);
+              const returnedAmount = parseFloat(sale.returned_amount_usd) || 0;
+              const netTotal = (parseFloat(sale.total_amount_usd) || 0) - returnedAmount;
+              const isPendingFinalization = sale.status !== 'Finalizado' && sale.status !== 'Cancelado' && sale.status !== 'Parcialmente Devolvida' && sale.status !== 'Totalmente Devolvida';
 
               return (
                 <TableRow key={sale.id}>
@@ -405,14 +417,22 @@ export const SalesModule = ({
                   </TableCell>
                   <TableCell>
                     <div className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      {totalUnits} {totalUnits === 1 ? 'aparelho' : 'aparelhos'}
+                      {returnedUnits > 0
+                        ? `${activeUnits} ativos • ${returnedUnits} devolvidos`
+                        : `${totalUnits} ${totalUnits === 1 ? 'aparelho' : 'aparelhos'}`}
                     </div>
                     <div className="text-[11px] text-slate-400 truncate max-w-xs">
                       {sale.items?.map(i => `${i.quantity}x ${i.model} ${i.storage}`).join(', ') || 'Aparelhos selecionados'}
                     </div>
                   </TableCell>
-                  <TableCell className="font-extrabold text-slate-900 dark:text-white">
+                  <TableCell className="font-semibold text-slate-600 dark:text-slate-300">
                     {formatUSD(sale.total_amount_usd)}
+                  </TableCell>
+                  <TableCell className={returnedAmount > 0 ? 'font-bold text-rose-500 dark:text-rose-400' : 'text-slate-400'}>
+                    {returnedAmount > 0 ? `-${formatUSD(returnedAmount)}` : '—'}
+                  </TableCell>
+                  <TableCell className="font-extrabold text-slate-900 dark:text-white">
+                    {formatUSD(netTotal)}
                   </TableCell>
                   <TableCell>
                     <span className={`px-2.5 py-1 rounded-md text-xs font-bold border ${statusStyle.bg}`}>
@@ -432,17 +452,28 @@ export const SalesModule = ({
                       >
                         Ver Detalhes
                       </Button>
-                      {sale.status !== 'Finalizado' && sale.status !== 'Cancelado' && (
+                      {isPendingFinalization && (
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => onNavigate('payments', { orderId: sale.id })}
+                          onClick={() => setOrderToFinalize(sale)}
                           icon={DollarSign}
-                          title="Ir para Pagamento"
+                          title="Finalizar Venda"
                         >
-                          Pagar
+                          Finalizar Venda
                         </Button>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setDeleteError('');
+                          setSaleToDelete(sale);
+                        }}
+                        icon={Trash2}
+                        title="Excluir Venda"
+                        className="text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                      />
                     </div>
                   </TableCell>
                 </TableRow>
@@ -465,7 +496,7 @@ export const SalesModule = ({
           <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
-                <Smartphone className="w-4 h-4" /> Configurar Item do Pedido
+                <IPhoneIcon className="w-4 h-4" /> Configurar Item do Pedido
               </h4>
               <span className="inline-flex items-center px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#111418] text-white dark:bg-slate-900 dark:text-white border border-slate-900 dark:border-slate-700 shadow-xs tracking-tight">
                 {remainingAvailable > 0 ? `${remainingAvailable} disponíveis no estoque` : '0 disponíveis no estoque'}
@@ -690,7 +721,9 @@ export const SalesModule = ({
             {/* Resumo Financeiro */}
             <div className="grid grid-cols-2 gap-3">
               <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <span className="text-xs text-slate-400">Total da Venda</span>
+                <span className="text-xs text-slate-400">
+                  {selectedSale.returned_amount_usd > 0 ? 'Faturamento Bruto' : 'Total da Venda'}
+                </span>
                 <div className="text-lg font-extrabold text-slate-900 dark:text-white mt-1">
                   {formatUSD(selectedSale.total_amount_usd)}
                 </div>
@@ -703,46 +736,124 @@ export const SalesModule = ({
                   {formatUSD(selectedSale.balance_due_usd || 0)}
                 </div>
               </div>
+              {selectedSale.returned_amount_usd > 0 && (
+                <>
+                  <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60">
+                    <span className="text-xs text-rose-600 dark:text-rose-300">Devolvido</span>
+                    <div className="text-lg font-extrabold text-rose-600 dark:text-rose-400 mt-1">
+                      -{formatUSD(selectedSale.returned_amount_usd)}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60">
+                    <span className="text-xs text-emerald-700 dark:text-emerald-300">Faturamento Líquido</span>
+                    <div className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">
+                      {formatUSD(selectedSale.total_amount_usd - selectedSale.returned_amount_usd)}
+                    </div>
+                  </div>
+                </>
+              )}
+              {selectedSale.credit_due_usd > 0 && (
+                <div className="col-span-2 p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                  Crédito ao lojista pendente de tratamento: {formatUSD(selectedSale.credit_due_usd)}
+                </div>
+              )}
             </div>
 
-            {/* Aparelhos e IMEIs Alocados */}
+            {/* Aparelhos Ativos na Venda */}
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
-                Aparelhos Alocados ({selectedSale.allocated_devices?.length || 0})
+                Aparelhos na Venda ({selectedSale.allocated_devices?.length || 0})
               </h4>
               <div className="space-y-2">
-                {selectedSale.allocated_devices?.map((dev, idx) => (
-                  <div key={idx} className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-bold text-slate-900 dark:text-white">
-                        {dev.model} {dev.storage} — <span className="font-mono text-xs text-indigo-600 dark:text-indigo-400">{formatImei(dev.imei)}</span>
-                      </div>
-                      <div className="text-xs text-slate-400 mt-0.5">
-                        Cor: {dev.color} • Bateria: {dev.battery_health}%
-                      </div>
-                    </div>
-                    <Badge variant={dev.separated ? 'mint' : 'lavender'} size="sm">
-                      {dev.separated ? 'Separado' : 'Reservado'}
-                    </Badge>
+                {(selectedSale.allocated_devices || []).length === 0 ? (
+                  <div className="text-xs text-slate-400 py-3 text-center border border-dashed border-slate-200 dark:border-slate-700 rounded-xl">
+                    Todos os aparelhos desta venda foram devolvidos.
                   </div>
-                ))}
+                ) : (
+                  selectedSale.allocated_devices.map((dev, idx) => (
+                    <div key={idx} className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white">
+                          {dev.model} {dev.storage} — <span className="font-mono text-xs text-indigo-600 dark:text-indigo-400">{formatImei(dev.imei)}</span>
+                        </div>
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          Cor: {dev.color} • Bateria: {dev.battery_health}%
+                        </div>
+                      </div>
+                      <Badge variant={dev.separated ? 'mint' : 'lavender'} size="sm">
+                        {dev.separated ? 'Separado' : 'Reservado'}
+                      </Badge>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
+            {/* Aparelhos Devolvidos */}
+            {selectedSale.returned_devices?.length > 0 && (
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
+                  Aparelhos Devolvidos ({selectedSale.returned_devices.length})
+                </h4>
+                <div className="space-y-2">
+                  {selectedSale.returned_devices.map((dev, idx) => (
+                    <div key={idx} className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-800 flex items-center justify-between opacity-70">
+                      <div>
+                        <div className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                          {dev.model} {dev.storage} — <span className="font-mono text-xs text-slate-400">{formatImei(dev.imei)}</span>
+                        </div>
+                      </div>
+                      <Badge variant="lavender" size="sm">Devolvido</Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Histórico de Devoluções */}
+            {selectedSale.returns?.length > 0 && (
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
+                  Devoluções ({selectedSale.returns.length})
+                </h4>
+                <div className="space-y-2.5">
+                  {selectedSale.returns.map((ret, idx) => (
+                    <div key={ret.id || idx} className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">{ret.reason}</span>
+                        <span className="text-xs text-slate-400">{formatDate(ret.created_at, true)}</span>
+                      </div>
+                      {ret.notes && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{ret.notes}</p>
+                      )}
+                      <div className="mt-2 space-y-1">
+                        {(ret.items || []).map((item, iIdx) => (
+                          <div key={iIdx} className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                            <span>{formatImei(item.imei)} — {item.model} {item.storage}</span>
+                            <span className="font-bold text-rose-500">-{formatUSD(item.original_sale_price_usd)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Ações da Venda */}
             <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
-              {selectedSale.status !== 'Finalizado' && selectedSale.status !== 'Cancelado' && (
+              {selectedSale.status !== 'Finalizado' && selectedSale.status !== 'Cancelado' && selectedSale.status !== 'Parcialmente Devolvida' && selectedSale.status !== 'Totalmente Devolvida' && (
                 <>
                   <Button
                     variant="primary"
                     size="md"
                     onClick={() => {
-                      onNavigate('payments', { orderId: selectedSale.id });
+                      setOrderToFinalize(selectedSale);
                       setSelectedSale(null);
                     }}
                     icon={DollarSign}
                   >
-                    Gerenciar Pagamentos e Parcelas
+                    Finalizar Venda
                   </Button>
                   <Button
                     variant="outline"
@@ -758,6 +869,35 @@ export const SalesModule = ({
                   </Button>
                 </>
               )}
+
+              {(selectedSale.status === 'Finalizado' || selectedSale.status === 'Parcialmente Devolvida') && selectedSale.allocated_devices?.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="md"
+                  onClick={() => {
+                    setSaleToReturn(selectedSale);
+                    setSelectedSale(null);
+                  }}
+                  icon={Undo2}
+                  className="text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950/30"
+                >
+                  Registrar Devolução
+                </Button>
+              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setDeleteError('');
+                  setSaleToDelete(selectedSale);
+                  setSelectedSale(null);
+                }}
+                icon={Trash2}
+                className="text-rose-600 border-rose-200 hover:bg-rose-50 dark:text-rose-400 dark:border-rose-900/60 dark:hover:bg-rose-950/30"
+              >
+                Excluir Venda
+              </Button>
             </div>
           </div>
         </Drawer>
@@ -779,6 +919,53 @@ export const SalesModule = ({
           variant="danger"
         />
       )}
+
+      {/* DIÁLOGO DE EXCLUSÃO DE VENDA */}
+      {saleToDelete && (
+        <ConfirmDialog
+          isOpen={Boolean(saleToDelete)}
+          onClose={() => { if (!isDeletingOrder) setSaleToDelete(null); }}
+          onConfirm={async () => {
+            setIsDeletingOrder(true);
+            setDeleteError('');
+            try {
+              await onDeleteOrder(saleToDelete.id);
+              setSaleToDelete(null);
+            } catch (err) {
+              setDeleteError(err.message || 'Erro ao excluir a venda.');
+            } finally {
+              setIsDeletingOrder(false);
+            }
+          }}
+          title="Excluir Venda Permanentemente"
+          message={
+            deleteError
+              ? deleteError
+              : `Tem certeza que deseja excluir a venda ${saleToDelete.order_number}? Os aparelhos ainda vinculados voltarão automaticamente para Disponível no estoque. Pagamentos, parcelas e devoluções desta venda serão apagados. Esta ação não pode ser desfeita.`
+          }
+          confirmText="Sim, Excluir Venda"
+          cancelText="Não, Manter"
+          variant="danger"
+          loading={isDeletingOrder}
+        />
+      )}
+
+      {/* MODAL DE FINALIZAÇÃO DE VENDA (pagamento + parcelamento em uma única etapa) */}
+      <FinalizeSaleModal
+        isOpen={Boolean(orderToFinalize)}
+        order={orderToFinalize}
+        exchangeRate={exchangeRate}
+        onClose={() => setOrderToFinalize(null)}
+        onFinalizeSale={onFinalizeSale}
+      />
+
+      {/* MODAL DE DEVOLUÇÃO DE APARELHOS (venda já finalizada) */}
+      <RegisterReturnModal
+        isOpen={Boolean(saleToReturn)}
+        order={saleToReturn}
+        onClose={() => setSaleToReturn(null)}
+        onRegisterReturn={onRegisterReturn}
+      />
     </div>
   );
 };

@@ -27,10 +27,12 @@ export const DashboardOverview = ({
   const totalStockValueUSD = availableDevices.reduce((sum, d) => sum + (d.cost_price_usd || 0), 0);
   const totalSuggestedValueUSD = availableDevices.reduce((sum, d) => sum + (d.suggested_price_usd || 0), 0);
 
-  const completedOrders = orders.filter(o => o.status === 'Finalizado');
-  const totalRevenueUSD = completedOrders.reduce((sum, o) => sum + (o.total_amount_usd || 0), 0);
+  const completedOrders = orders.filter(o => o.status === 'Finalizado' || o.status === 'Parcialmente Devolvida' || o.status === 'Totalmente Devolvida');
+  // total_amount_usd / total_commission_usd são o bruto histórico; subtrai o que foi devolvido
+  // para refletir o faturamento e a comissão realmente efetivos (líquidos de devolução).
+  const totalRevenueUSD = completedOrders.reduce((sum, o) => sum + ((o.total_amount_usd || 0) - (o.returned_amount_usd || 0)), 0);
   const totalProfitUSD = completedOrders.reduce((sum, o) => sum + (o.total_profit_usd || 0), 0);
-  const totalCommissionsUSD = completedOrders.reduce((sum, o) => sum + (o.total_commission_usd || 0), 0);
+  const totalCommissionsUSD = completedOrders.reduce((sum, o) => sum + ((o.total_commission_usd || 0) - (o.returned_commission_usd || 0)), 0);
   
   const totalReceivablesUSD = installments.filter(i => i.status !== 'Pago').reduce((sum, i) => sum + (i.amount_usd || 0), 0);
   const overdueInstallments = installments.filter(i => i.status === 'Vencido');
