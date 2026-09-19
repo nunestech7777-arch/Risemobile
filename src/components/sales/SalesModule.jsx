@@ -22,13 +22,7 @@ import { ConfirmDialog, EmptyState } from '../ui/EmptyState';
 import { FinalizeSaleModal } from './FinalizeSaleModal';
 import { RegisterReturnModal } from './RegisterReturnModal';
 import { formatUSD, formatImei, formatColor, formatBattery, formatDate, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
-
-const IPHONE_MODELS = [
-  'iPhone 13', 'iPhone 13 mini', 'iPhone 13 Pro', 'iPhone 13 Pro Max',
-  'iPhone 14', 'iPhone 14 Plus', 'iPhone 14 Pro', 'iPhone 14 Pro Max',
-  'iPhone 15', 'iPhone 15 Plus', 'iPhone 15 Pro', 'iPhone 15 Pro Max',
-  'iPhone 16', 'iPhone 16 Plus', 'iPhone 16 Pro', 'iPhone 16 Pro Max'
-];
+import { IPHONE_MODELS } from '../../lib/deviceOptions';
 
 const STORAGE_OPTIONS = ['64GB', '128GB', '256GB', '512GB', '1TB'];
 

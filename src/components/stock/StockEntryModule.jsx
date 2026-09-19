@@ -22,14 +22,7 @@ import { Table, TableRow, TableCell } from '../ui/Table';
 import { Modal } from '../ui/Modal';
 import { formatUSD, formatColor, formatBattery, getDeviceCompleteness } from '../../lib/formatters';
 import { downloadStockTemplate, parseStockExcelFile } from '../../lib/excelUtils';
-import { COLOR_OPTIONS } from '../../lib/deviceOptions';
-
-const IPHONE_MODELS = [
-  'iPhone 13', 'iPhone 13 mini', 'iPhone 13 Pro', 'iPhone 13 Pro Max',
-  'iPhone 14', 'iPhone 14 Plus', 'iPhone 14 Pro', 'iPhone 14 Pro Max',
-  'iPhone 15', 'iPhone 15 Plus', 'iPhone 15 Pro', 'iPhone 15 Pro Max',
-  'iPhone 16', 'iPhone 16 Plus', 'iPhone 16 Pro', 'iPhone 16 Pro Max'
-];
+import { COLOR_OPTIONS, IPHONE_MODELS } from '../../lib/deviceOptions';
 
 const STORAGE_OPTIONS = ['64GB', '128GB', '256GB', '512GB', '1TB'];
 
