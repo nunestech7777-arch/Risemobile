@@ -11,7 +11,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Input, Select } from '../ui/Input';
 import { FinalizeSaleModal } from '../sales/FinalizeSaleModal';
-import { formatImei, getBatteryHealthBadge } from '../../lib/formatters';
+import { formatImeiLabel, formatColor, getBatteryHealthBadge } from '../../lib/formatters';
 
 export const SeparationModule = ({
   orders = [],
@@ -42,7 +42,7 @@ export const SeparationModule = ({
 
     // Procura o aparelho no pedido atual
     const matchingDevice = allocatedDevices.find(d => 
-      d.imei.toString().replace(/\D/g, '').trim() === cleanImei
+      d.imei && d.imei.toString().replace(/\D/g, '').trim() === cleanImei
     );
 
     if (!matchingDevice) {
@@ -67,9 +67,18 @@ export const SeparationModule = ({
     onMarkDeviceSeparated(currentOrder.id, matchingDevice.device_id || matchingDevice.imei);
     setFeedback({
       type: 'success',
-      message: `Conferido com sucesso: ${matchingDevice.model} ${matchingDevice.storage} (${formatImei(matchingDevice.imei)})`
+      message: `Conferido com sucesso: ${matchingDevice.model} ${matchingDevice.storage} (${formatImeiLabel(matchingDevice.imei)})`
     });
     setScannedImei('');
+  };
+
+  // Aparelhos cadastrados sem IMEI não têm o que bipar: a conferência é manual, pelo id interno
+  const handleManualConfirm = (device) => {
+    onMarkDeviceSeparated(currentOrder.id, device.device_id);
+    setFeedback({
+      type: 'success',
+      message: `Conferido manualmente: ${device.model} ${device.storage} (${formatImeiLabel(device.imei)})`
+    });
   };
 
   return (
@@ -78,7 +87,7 @@ export const SeparationModule = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Separação & Conferência de Carga</h2>
-          <p className="text-xs text-slate-400">Bipe os IMEIs físicos para validar os aparelhos antes da entrega ou envio</p>
+          <p className="text-xs text-slate-400">Bipe os IMEIs físicos para validar os aparelhos antes da entrega ou envio (aparelhos sem IMEI são conferidos manualmente)</p>
         </div>
 
         {/* Order Selector */}
@@ -228,16 +237,23 @@ export const SeparationModule = ({
                             {dev.model} {dev.storage}
                           </div>
                           <div className="font-mono text-xs text-slate-500 dark:text-slate-300">
-                            IMEI: {formatImei(dev.imei)}
+                            {formatImeiLabel(dev.imei)}
                           </div>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-3">
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getBatteryHealthBadge(dev.battery_health).color}`}>
-                          {dev.battery_health}% bat
-                        </span>
-                        <span className="text-xs text-slate-500 dark:text-slate-300">{dev.color}</span>
+                        {getBatteryHealthBadge(dev.battery_health).label !== '—' && (
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getBatteryHealthBadge(dev.battery_health).color}`}>
+                            {getBatteryHealthBadge(dev.battery_health).label} bat
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-500 dark:text-slate-300">{formatColor(dev.color)}</span>
+                        {!isDone && !dev.imei && (
+                          <Button variant="outline" size="sm" onClick={() => handleManualConfirm(dev)}>
+                            Conferir
+                          </Button>
+                        )}
                       </div>
                     </div>
                   );

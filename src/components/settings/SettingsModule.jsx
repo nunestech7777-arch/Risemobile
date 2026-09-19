@@ -175,7 +175,7 @@ export const SettingsModule = ({
 
             <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/80 space-y-3 text-xs leading-relaxed">
               <p>
-                <strong>Engine Transacional:</strong> Todas as regras críticas (unicidade estrita de IMEI, concorrência pessimista <code>FOR UPDATE SKIP LOCKED</code>, cálculo de lucro real e cancelamento) estão modeladas nas migrations em <code>supabase/migrations/</code> e reproduzidas fidedignamente no front/local engine.
+                <strong>Engine Transacional:</strong> Todas as regras críticas (unicidade de IMEI/Serial quando informado (opcional), concorrência pessimista <code>FOR UPDATE SKIP LOCKED</code>, cálculo de lucro real e cancelamento) estão modeladas nas migrations em <code>supabase/migrations/</code> e reproduzidas fidedignamente no front/local engine.
               </p>
               <div className="pt-2 border-t border-slate-200 dark:border-slate-700 font-mono text-[11px] text-slate-500">
                 <div>• 001_initial_schema.sql (14 tabelas com constraints e índices)</div>
@@ -202,7 +202,7 @@ export const SettingsModule = ({
 
             <div className="space-y-3">
               {[
-                { id: 'TESTE 1', title: 'Cadastrar dois aparelhos com mesmo IMEI', result: 'BLOQUEADO', desc: 'Constraint UNIQUE no PostgreSQL e verificação prévia no importer/service.' },
+                { id: 'TESTE 1', title: 'Cadastrar dois aparelhos com mesmo IMEI', result: 'BLOQUEADO', desc: 'Índice único parcial no PostgreSQL (só quando o IMEI/Serial é informado) e verificação prévia no importer/service. Aparelhos sem IMEI são permitidos.' },
                 { id: 'TESTE 2', title: 'Reservar aparelho já reservado', result: 'BLOQUEADO', desc: 'Lock FOR UPDATE SKIP LOCKED na RPC impede dupla reserva simultânea.' },
                 { id: 'TESTE 3', title: 'Vender unidade vinculada a outro pedido', result: 'BLOQUEADO', desc: 'Validação de alocação de pedido garante exclusividade.' },
                 { id: 'TESTE 4', title: 'Cancelar pedido', result: 'LIBERADO COM SUCESSO', desc: 'Aparelhos retornam a Disponível e movimentação de cancelamento é registrada.' },

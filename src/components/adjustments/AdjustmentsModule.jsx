@@ -44,8 +44,8 @@ export const AdjustmentsModule = ({
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const dev = devicesMap.get(m.device_id) || devicesMap.get(m.imei);
-        const modelStr = dev ? `${dev.model} ${dev.storage} ${dev.color}`.toLowerCase() : '';
-        const imeiStr = (m.imei || '').toLowerCase();
+        const modelStr = dev ? `${dev.model} ${dev.storage} ${dev.color || ''}`.toLowerCase() : '';
+        const imeiStr = (dev?.imei || m.imei || '').toLowerCase();
         const reasonStr = (m.reason || m.notes || '').toLowerCase();
         const typeStr = (m.movement_type || '').toLowerCase();
 
@@ -156,11 +156,11 @@ export const AdjustmentsModule = ({
                     <div>
                       {dev && (
                         <div className="text-xs font-bold text-slate-900 dark:text-white">
-                          {dev.model} {dev.storage} <span className="text-slate-500 dark:text-slate-300 font-normal">({dev.color})</span>
+                          {dev.model} {dev.storage}{dev.color && <span className="text-slate-500 dark:text-slate-300 font-normal"> ({dev.color})</span>}
                         </div>
                       )}
                       <div className="font-mono text-xs text-slate-500 dark:text-slate-300">
-                        {formatImei(m.imei)}
+                        {formatImei(dev?.imei || m.imei, 'IMEI não informado')}
                       </div>
                     </div>
                   </TableCell>

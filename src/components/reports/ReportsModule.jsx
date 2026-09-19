@@ -15,7 +15,7 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Table, TableRow, TableCell } from '../ui/Table';
-import { formatUSD, formatBRL, formatDate, formatImei } from '../../lib/formatters';
+import { formatUSD, formatBRL, formatDate, formatImei, formatColor, formatBattery } from '../../lib/formatters';
 import { exportDataToFile } from '../../lib/excelUtils';
 
 export const ReportsModule = ({
@@ -55,9 +55,9 @@ export const ReportsModule = ({
           'Modelo': d.model,
           'Armazenamento': d.storage,
           'Grade': g?.name || 'A++',
-          'Cor': d.color,
-          'Bateria (%)': d.battery_health,
-          'IMEI': d.imei,
+          'Cor': d.color || '',
+          'Bateria (%)': d.battery_health ?? '',
+          'IMEI': d.imei || '',
           'Custo (USD)': d.cost_price_usd,
           'Preço Sugerido (USD)': d.suggested_price_usd,
           'Status': d.status,
@@ -167,8 +167,8 @@ export const ReportsModule = ({
                   <TableRow key={d.id}>
                     <TableCell className="font-extrabold">{d.model}</TableCell>
                     <TableCell>{d.storage}</TableCell>
-                    <TableCell>{d.color}</TableCell>
-                    <TableCell>{d.battery_health}%</TableCell>
+                    <TableCell>{formatColor(d.color)}</TableCell>
+                    <TableCell>{formatBattery(d.battery_health)}</TableCell>
                     <TableCell className="font-mono text-xs">{formatImei(d.imei)}</TableCell>
                     <TableCell className="font-semibold">{formatUSD(d.cost_price_usd)}</TableCell>
                     <TableCell>
@@ -226,8 +226,8 @@ export const ReportsModule = ({
                 <TableRow key={d.id}>
                   <TableCell className="font-extrabold">{d.model}</TableCell>
                   <TableCell>{d.storage}</TableCell>
-                  <TableCell>{d.color}</TableCell>
-                  <TableCell>{d.battery_health}%</TableCell>
+                  <TableCell>{formatColor(d.color)}</TableCell>
+                  <TableCell>{formatBattery(d.battery_health)}</TableCell>
                   <TableCell className="font-mono text-xs">{formatImei(d.imei)}</TableCell>
                   <TableCell className="font-semibold">{formatUSD(d.cost_price_usd)}</TableCell>
                   <TableCell className="font-extrabold text-emerald-600">{formatUSD(d.suggested_price_usd)}</TableCell>

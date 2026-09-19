@@ -41,6 +41,7 @@ export function App() {
   // System Core Data States
   const [grades, setGrades] = useState([]);
   const [devices, setDevices] = useState([]);
+  const [deletedDevices, setDeletedDevices] = useState([]);
   const [retailers, setRetailers] = useState([]);
   const [orders, setOrders] = useState([]);
   const [installments, setInstallments] = useState([]);
@@ -168,6 +169,7 @@ export function App() {
       const [
         loadedGrades, 
         loadedDevices, 
+        loadedDeletedDevices,
         loadedRetailers, 
         loadedOrders, 
         loadedInstallments, 
@@ -179,6 +181,7 @@ export function App() {
       ] = await Promise.all([
         DataService.getGrades(),
         DataService.getDevices(),
+        DataService.getDeletedDevices(),
         DataService.getRetailers(),
         DataService.getOrders(),
         DataService.getInstallments(),
@@ -191,6 +194,7 @@ export function App() {
 
       setGrades(loadedGrades);
       setDevices(loadedDevices);
+      setDeletedDevices(loadedDeletedDevices);
       setRetailers(loadedRetailers);
       setOrders(loadedOrders);
       setInstallments(loadedInstallments);
@@ -313,6 +317,18 @@ export function App() {
     await loadAllData();
   };
 
+  const handleDeleteDevice = async (deviceId, reason) => {
+    const res = await DataService.deleteDevice(deviceId, reason, user?.email || 'admin');
+    await loadAllData();
+    return res;
+  };
+
+  const handleUpdateDevice = async (deviceId, changes) => {
+    const res = await DataService.updateDevice(deviceId, changes, user?.email || 'admin');
+    await loadAllData();
+    return res;
+  };
+
   const handleConfirmStockEntry = async (batchHeader, items) => {
     const res = await DataService.createStockEntryBatchMulti(batchHeader, items, user?.email || 'admin');
     await loadAllData();
@@ -328,12 +344,12 @@ export function App() {
   // Título da página atual
   const pageTitles = {
     dashboard: { title: 'Visão Geral', subtitle: 'Painel executivo de atacado de iPhones' },
-    stock: { title: 'Estoque', subtitle: 'Visão consolidada e consulta por IMEI' },
+    stock: { title: 'Estoque', subtitle: 'Visão consolidada e consulta por modelo, grade ou IMEI' },
     stock_entry: { title: 'Entrada & Importação', subtitle: 'Cadastro manual em lote e importação por planilha' },
     sales: { title: 'Vendas', subtitle: 'Seleção automática de modelos, reserva e finalização comercial' },
     orders: { title: 'Vendas', subtitle: 'Seleção automática de modelos, reserva e finalização comercial' },
     retailers: { title: 'Lojistas', subtitle: 'Gestão de parceiros comerciais e histórico' },
-    separation: { title: 'Separação & Conferência', subtitle: 'Bipador físico de IMEIs para expedição' },
+    separation: { title: 'Separação & Conferência', subtitle: 'Conferência de aparelhos (bipe de IMEI quando houver) para expedição' },
     payments: { title: 'Contas a Receber', subtitle: 'Saldos em aberto, parcelas e baixas de recebimento' },
     commissions: { title: 'Comissões', subtitle: 'Comissão única oficial por indicação de lojista' },
     profit: { title: 'Faturamento', subtitle: 'Acompanhe o faturamento realizado e o potencial de vendas da operação' },
@@ -346,9 +362,10 @@ export function App() {
       title: `Parcela Vencida: ${i.order_number}`,
       description: `${i.retailer_name} — ${i.amount_usd} USD`
     })),
-    ...devices.filter(d => d.battery_health < 80 && d.status === 'Disponível').map(d => ({
+    // Bateria não informada (null) não gera alerta
+    ...devices.filter(d => d.battery_health !== null && d.battery_health !== undefined && d.battery_health !== '' && Number(d.battery_health) < 80 && d.status === 'Disponível').map(d => ({
       title: `Bateria Baixa: ${d.model}`,
-      description: `IMEI ${d.imei} com ${d.battery_health}% de saúde`
+      description: `${d.imei ? `IMEI ${d.imei}` : 'IMEI não informado'} com ${d.battery_health}% de saúde`
     }))
   ];
 
@@ -470,6 +487,9 @@ export function App() {
               movements={movements}
               onNavigate={handleNavigate}
               onSaveGrade={handleSaveGrade}
+              onUpdateDevice={handleUpdateDevice}
+              onDeleteDevice={handleDeleteDevice}
+              deletedDevices={deletedDevices}
             />
           )}
 

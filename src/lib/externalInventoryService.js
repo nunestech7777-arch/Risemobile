@@ -40,14 +40,14 @@ export const normalizeExternalDevicePayload = (externalDevice, defaultSource = '
   const color = (
     externalDevice.color || 
     externalDevice.cor || 
-    'Padrão'
+    ''
   ).toString().trim();
 
   const batteryHealth = parseInt(
     externalDevice.battery_health ?? 
     externalDevice.battery ?? 
     externalDevice.saude_bateria ?? 
-    100, 
+    '', 
     10
   );
 
@@ -66,7 +66,7 @@ export const normalizeExternalDevicePayload = (externalDevice, defaultSource = '
   );
 
   return {
-    external_id: externalId || `ext-${imei}`,
+    external_id: externalId || (imei ? `ext-${imei}` : ''),
     external_source: externalDevice.external_source || defaultSource,
     external_updated_at: externalDevice.updated_at || new Date().toISOString(),
     imei,
@@ -75,7 +75,7 @@ export const normalizeExternalDevicePayload = (externalDevice, defaultSource = '
     grade_id: externalDevice.grade_id || null,
     grade_name: externalDevice.grade_name || externalDevice.grade || 'A++',
     color,
-    battery_health: isNaN(batteryHealth) ? 100 : Math.max(0, Math.min(100, batteryHealth)),
+    battery_health: isNaN(batteryHealth) ? null : Math.max(0, Math.min(100, batteryHealth)),
     cost_price_usd: isNaN(costPrice) ? 0 : costPrice,
     suggested_price_usd: isNaN(suggestedPrice) ? 0 : suggestedPrice,
     sync_status: 'synced',
@@ -104,7 +104,8 @@ export class ExternalInventoryProvider {
     // Normaliza todos os registros
     const normalizedDevices = rawExternalDevices
       .map(item => normalizeExternalDevicePayload(item, this.sourceName))
-      .filter(item => item && item.imei && item.model);
+      // IMEI é opcional: sem IMEI o aparelho externo é identificado pelo external_id
+      .filter(item => item && (item.imei || item.external_id) && item.model);
 
     // Envia para o motor de UPSERT idempotente do DataService
     return await DataService.syncExternalDevices(normalizedDevices, this.sourceName);

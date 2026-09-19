@@ -2,7 +2,7 @@ import React from 'react';
 import { Drawer } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { formatDate, formatUSD, formatImei, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
+import { formatDate, formatUSD, formatImeiLabel, formatColor, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
 import { Clock, ShieldAlert, CheckCircle, ArrowRight, ArrowDownLeft, Tag, Layers } from 'lucide-react';
 
 export const DeviceHistoryDrawer = ({
@@ -24,7 +24,7 @@ export const DeviceHistoryDrawer = ({
       isOpen={isOpen}
       onClose={onClose}
       title={`${device.model} ${device.storage}`}
-      subtitle={`IMEI: ${formatImei(device.imei)}`}
+      subtitle={formatImeiLabel(device.imei)}
       width="max-w-lg"
     >
       <div className="space-y-6">
@@ -35,7 +35,7 @@ export const DeviceHistoryDrawer = ({
               {device.status}
             </span>
             <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${batteryInfo.color}`}>
-              Bateria {batteryInfo.label}
+              {batteryInfo.label === '—' ? 'Bateria não informada' : `Bateria ${batteryInfo.label}`}
             </span>
           </div>
 
@@ -46,15 +46,15 @@ export const DeviceHistoryDrawer = ({
             </div>
             <div>
               <span className="text-slate-400">Cor:</span>
-              <p className="font-bold text-slate-800 dark:text-slate-100">{device.color}</p>
+              <p className="font-bold text-slate-800 dark:text-slate-100">{formatColor(device.color)}</p>
             </div>
             <div>
               <span className="text-slate-400">Preço de Custo (USD):</span>
-              <p className="font-bold text-slate-800 dark:text-slate-100">{formatUSD(device.cost_price_usd)}</p>
+              <p className="font-bold text-slate-800 dark:text-slate-100">{device.cost_price_usd ? formatUSD(device.cost_price_usd) : '—'}</p>
             </div>
             <div>
               <span className="text-slate-400">Preço Sugerido (USD):</span>
-              <p className="font-bold text-emerald-600 dark:text-emerald-400 font-bold">{formatUSD(device.suggested_price_usd)}</p>
+              <p className="font-bold text-emerald-600 dark:text-emerald-400 font-bold">{device.suggested_price_usd ? formatUSD(device.suggested_price_usd) : '—'}</p>
             </div>
           </div>
         </div>

@@ -20,36 +20,38 @@ export const exportDataToFile = (data, filename = 'risemobile-export', format = 
  * Baixar Modelo Oficial de Planilha de Estoque RiseMobile (.xlsx)
  */
 export const downloadStockTemplate = () => {
+  // Só Modelo, Armazenamento e Grade são obrigatórios. As demais colunas são opcionais:
+  // linhas sem IMEI / Serial são aceitas (o IMEI só precisa ser único quando informado).
   const templateData = [
     {
       'Modelo': 'iPhone 13',
       'Armazenamento': '128GB',
       'Grade': 'A++',
-      'Cor': 'Meia-noite',
-      'Saúde da Bateria (%)': 95,
-      'IMEI / Serial': '354890123456789',
-      'Custo Unitário (USD)': 350.00,
-      'Preço Sugerido (USD)': 430.00
+      'Cor (opcional)': 'Meia-noite',
+      'Saúde da Bateria % (opcional)': 95,
+      'IMEI / Serial (opcional)': '354890123456789',
+      'Custo Unitário USD (opcional)': 350.00,
+      'Preço Sugerido USD (opcional)': 430.00
     },
     {
       'Modelo': 'iPhone 13',
       'Armazenamento': '128GB',
       'Grade': 'A++',
-      'Cor': 'Estelar',
-      'Saúde da Bateria (%)': 92,
-      'IMEI / Serial': '354890123456790',
-      'Custo Unitário (USD)': 350.00,
-      'Preço Sugerido (USD)': 430.00
+      'Cor (opcional)': '',
+      'Saúde da Bateria % (opcional)': '',
+      'IMEI / Serial (opcional)': '',
+      'Custo Unitário USD (opcional)': 350.00,
+      'Preço Sugerido USD (opcional)': 430.00
     },
     {
       'Modelo': 'iPhone 14 Pro',
       'Armazenamento': '256GB',
       'Grade': 'A++',
-      'Cor': 'Roxo Profundo',
-      'Saúde da Bateria (%)': 89,
-      'IMEI / Serial': '354890123456791',
-      'Custo Unitário (USD)': 560.00,
-      'Preço Sugerido (USD)': 670.00
+      'Cor (opcional)': '',
+      'Saúde da Bateria % (opcional)': '',
+      'IMEI / Serial (opcional)': '',
+      'Custo Unitário USD (opcional)': '',
+      'Preço Sugerido USD (opcional)': ''
     }
   ];
 
@@ -103,9 +105,9 @@ export const parseStockExcelFile = async (file) => {
           const model = String(findVal(['modelo', 'model']) || '').trim();
           const storage = String(findVal(['armazenamento', 'storage', 'capacidade']) || '128GB').trim();
           const grade = String(findVal(['grade', 'classificacao']) || 'A++').trim();
-          const color = String(findVal(['cor', 'color']) || 'Padrão').trim();
+          const color = String(findVal(['cor', 'color']) || '').trim();
           const rawBattery = findVal(['bateria', 'battery', 'saude', 'saúde']);
-          const battery = rawBattery !== '' ? parseInt(rawBattery, 10) : 100;
+          const battery = String(rawBattery).trim() !== '' ? parseInt(rawBattery, 10) : NaN;
           const imei = String(findVal(['imei', 'serial', 'numero de serie', 'número de série']) || '').trim().replace(/[^a-zA-Z0-9]/g, '');
           const rawCost = findVal(['custo', 'cost', 'unitario', 'unitário']);
           const cost = rawCost !== '' ? parseFloat(String(rawCost).replace(',', '.')) : 0;
@@ -118,7 +120,7 @@ export const parseStockExcelFile = async (file) => {
             storage,
             grade,
             color,
-            battery_health: isNaN(battery) ? 100 : Math.min(100, Math.max(0, battery)),
+            battery_health: isNaN(battery) ? null : Math.min(100, Math.max(0, battery)),
             imei,
             cost_price_usd: isNaN(cost) ? 0 : cost,
             suggested_price_usd: isNaN(price) ? 0 : price,

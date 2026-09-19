@@ -20,8 +20,9 @@ import { Button } from '../ui/Button';
 import { Input, Select, CurrencyInput } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { Modal } from '../ui/Modal';
-import { formatUSD } from '../../lib/formatters';
+import { formatUSD, formatColor, formatBattery, getDeviceCompleteness } from '../../lib/formatters';
 import { downloadStockTemplate, parseStockExcelFile } from '../../lib/excelUtils';
+import { COLOR_OPTIONS } from '../../lib/deviceOptions';
 
 const IPHONE_MODELS = [
   'iPhone 13', 'iPhone 13 mini', 'iPhone 13 Pro', 'iPhone 13 Pro Max',
@@ -32,36 +33,31 @@ const IPHONE_MODELS = [
 
 const STORAGE_OPTIONS = ['64GB', '128GB', '256GB', '512GB', '1TB'];
 
-const COLOR_OPTIONS = [
-  'Preto', 'Branco', 'Meia-noite', 'Estelar', 'Azul', 'Rosa',
-  'Verde', 'Roxo Profundo', 'Dourado', 'Prateado', 'Grafite',
-  'Titânio Natural', 'Titânio Preto', 'Titânio Branco', 'Titânio Deserto'
-];
-
 const generateBatchCode = () => `LOTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-const createEmptyUnit = (costDefault, priceDefault) => ({
+// Só modelo, armazenamento, grade e quantidade são obrigatórios. IMEI/Serial, cor,
+// bateria, custo e preço nascem vazios e podem ser preenchidos agora ou depois.
+const createEmptyUnit = (costDefault = '', priceDefault = '') => ({
   id: `unit-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
   imei: '',
-  color: 'Meia-noite',
-  battery_health: 95,
+  color: '',
+  battery_health: '',
   cost_price_usd: costDefault,
   suggested_price_usd: priceDefault
 });
 
-const createDefaultItem = (defaultGradeId) => {
-  const cost = '350.00';
-  const price = '430.00';
-  return {
-    id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-    model: 'iPhone 13',
-    storage: '128GB',
-    grade_id: defaultGradeId || '',
-    unit_cost_usd: cost,
-    suggested_price_usd: price,
-    units: [createEmptyUnit(cost, price)]
-  };
-};
+const unitHasDetails = (unit) =>
+  (unit.imei || '').trim() !== '' || (unit.color || '').trim() !== '' || String(unit.battery_health ?? '') !== '';
+
+const createDefaultItem = (defaultGradeId) => ({
+  id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+  model: 'iPhone 13',
+  storage: '128GB',
+  grade_id: defaultGradeId || '',
+  unit_cost_usd: '',
+  suggested_price_usd: '',
+  units: [createEmptyUnit()]
+});
 
 export const StockEntryModule = ({
   grades = [],
@@ -142,7 +138,7 @@ export const StockEntryModule = ({
 
     // Reduzindo: nunca apagar silenciosamente linhas já preenchidas
     const toRemove = targetItem.units.slice(newQty);
-    const hasFilledData = toRemove.some(u => (u.imei || '').trim() !== '');
+    const hasFilledData = toRemove.some(unitHasDetails);
     if (hasFilledData) {
       const confirmed = window.confirm(
         `Reduzir para ${newQty} unidade(s) vai remover ${toRemove.length} linha(s) já preenchida(s) neste item. Deseja continuar?`
@@ -175,10 +171,10 @@ export const StockEntryModule = ({
       return;
     }
     const target = items.find(it => it.id === itemId);
-    const hasFilledData = target?.units.some(u => (u.imei || '').trim() !== '');
+    const hasFilledData = target?.units.some(unitHasDetails);
     if (hasFilledData) {
       const confirmed = window.confirm(
-        `O item ${target.model} ${target.storage} já possui IMEIs preenchidos. Remover mesmo assim?`
+        `O item ${target.model} ${target.storage} já possui dados individuais preenchidos (IMEI, cor ou bateria). Remover mesmo assim?`
       );
       if (!confirmed) return;
     }
@@ -215,7 +211,7 @@ export const StockEntryModule = ({
 
   // Conjunto de IMEIs já cadastrados no banco para detecção em tempo real
   const existingImeiSet = useMemo(() => {
-    return new Set(devices.map(d => (d.imei || '').trim().toLowerCase()));
+    return new Set(devices.map(d => (d.imei || '').trim().toLowerCase()).filter(Boolean));
   }, [devices]);
 
   // Contagem de ocorrências de cada IMEI dentro do lote inteiro (entre todos os itens)
@@ -237,16 +233,24 @@ export const StockEntryModule = ({
     let hasBlockingError = false;
 
     items.forEach((item, itemIdx) => {
+      if (!item.model || !item.storage || !item.grade_id) {
+        errors.push(`Item ${itemIdx + 1}: selecione modelo, armazenamento e grade.`);
+        hasBlockingError = true;
+      }
+
       item.units.forEach((unit, unitIdx) => {
         totalUnits++;
         const cleanImei = (unit.imei || '').trim().toLowerCase();
         const label = `Item ${itemIdx + 1} (${item.model} ${item.storage}), Unidade #${unitIdx + 1}`;
 
-        if (!cleanImei) {
-          errors.push(`${label}: IMEI não preenchido.`);
+        const battery = String(unit.battery_health ?? '');
+        if (battery !== '' && (Number.isNaN(Number(battery)) || Number(battery) < 0 || Number(battery) > 100)) {
+          errors.push(`${label}: a saúde da bateria deve estar entre 0 e 100.`);
           hasBlockingError = true;
-          return;
         }
+
+        // IMEI/Serial é opcional: só é validado (duplicidade) quando informado
+        if (!cleanImei) return;
         filledCount++;
 
         if (existingImeiSet.has(cleanImei)) {
@@ -341,9 +345,8 @@ export const StockEntryModule = ({
       const cleanImei = (row.imei || '').trim().toLowerCase();
 
       if (!row.model) issues.push('Modelo ausente');
-      if (!cleanImei) {
-        issues.push('IMEI / Serial ausente');
-      } else {
+      // IMEI/Serial é opcional: linhas sem IMEI são válidas e nunca duplicadas entre si
+      if (cleanImei) {
         if (existingImeiSet.has(cleanImei)) {
           issues.push('IMEI já cadastrado no sistema');
         }
@@ -499,7 +502,8 @@ export const StockEntryModule = ({
               </div>
               <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
                 Lote <strong>{successBanner.batchCode}</strong> • {successBanner.totalItems ? `${successBanner.totalItems} configurações • ` : ''}
-                {successBanner.quantity} aparelhos cadastrados como <strong>Disponível</strong> ({formatUSD(successBanner.totalCost)} de custo total).
+                {successBanner.quantity} aparelhos cadastrados como <strong>Disponível</strong>{' '}
+                ({successBanner.totalCost > 0 ? `${formatUSD(successBanner.totalCost)} de custo total` : 'custo não informado'}).
               </div>
             </div>
           </div>
@@ -622,13 +626,13 @@ export const StockEntryModule = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 mb-4 border-b border-slate-200/60 dark:border-slate-700/60">
                   <CurrencyInput
-                    label="Custo Unitário Padrão (USD)"
+                    label="Custo Unitário Padrão (USD) — opcional"
                     value={item.unit_cost_usd}
                     onChange={(val) => handleItemCostChange(item.id, val)}
                     currency="USD"
                   />
                   <CurrencyInput
-                    label="Preço Sugerido de Venda (USD)"
+                    label="Preço Sugerido de Venda (USD) — opcional"
                     value={item.suggested_price_usd}
                     onChange={(val) => handleItemPriceChange(item.id, val)}
                     currency="USD"
@@ -637,9 +641,14 @@ export const StockEntryModule = ({
 
                 {/* Unidades deste Item */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    Unidades deste Item ({itemFilledCount}/{item.units.length} IMEIs preenchidos)
-                  </h4>
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      Unidades deste Item (detalhes opcionais)
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {item.units.length} {item.units.length === 1 ? 'unidade será cadastrada' : 'unidades serão cadastradas'} • {itemFilledCount} {itemFilledCount === 1 ? 'IMEI informado' : 'IMEIs informados'}
+                    </p>
+                  </div>
                   <Button
                     variant="outline"
                     size="sm"
@@ -648,19 +657,21 @@ export const StockEntryModule = ({
                       setIsPasteModalOpen(true);
                     }}
                     icon={ClipboardPaste}
+                    title="Opcional: preenche vários IMEIs de uma vez"
                   >
-                    Colar Múltiplos IMEIs
+                    Colar IMEIs
                   </Button>
                 </div>
 
                 {/* Desktop Table View */}
                 <div className="hidden md:block border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
-                  <Table headers={['#', 'IMEI / Serial (Único)', 'Cor', 'Bateria (%)', 'Custo (USD)', 'Preço Sugerido (USD)', 'Status']}>
+                  <Table headers={['#', 'IMEI / Serial (opcional)', 'Cor (opcional)', 'Bateria % (opcional)', 'Custo (USD)', 'Preço Sugerido (USD)', 'Dados']}>
                     {item.units.map((unit, idx) => {
                       const cleanImei = (unit.imei || '').trim().toLowerCase();
                       const isDbDuplicate = cleanImei && existingImeiSet.has(cleanImei);
                       const isBatchDuplicate = cleanImei && (imeiCountInBatch.get(cleanImei) || 0) > 1;
                       const hasError = isDbDuplicate || isBatchDuplicate;
+                      const completeness = getDeviceCompleteness(unit);
 
                       return (
                         <TableRow key={unit.id}>
@@ -672,7 +683,7 @@ export const StockEntryModule = ({
                             <div className="space-y-1">
                               <input
                                 type="text"
-                                placeholder="354890123456789"
+                                placeholder="Opcional"
                                 value={unit.imei}
                                 onChange={(e) => handleUpdateUnit(item.id, idx, 'imei', e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
                                 className={`w-full px-3 py-1.5 rounded-xl font-mono text-xs font-bold transition-all ${
@@ -702,6 +713,7 @@ export const StockEntryModule = ({
                               onChange={(e) => handleUpdateUnit(item.id, idx, 'color', e.target.value)}
                               className="w-full px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-slate-100"
                             >
+                              <option value="" className="dark:bg-slate-900">Não informada</option>
                               {COLOR_OPTIONS.map(c => (
                                 <option key={c} value={c} className="dark:bg-slate-900">{c}</option>
                               ))}
@@ -714,8 +726,9 @@ export const StockEntryModule = ({
                                 type="number"
                                 min="0"
                                 max="100"
+                                placeholder="—"
                                 value={unit.battery_health}
-                                onChange={(e) => handleUpdateUnit(item.id, idx, 'battery_health', parseInt(e.target.value, 10) || 0)}
+                                onChange={(e) => handleUpdateUnit(item.id, idx, 'battery_health', e.target.value)}
                                 className="w-16 px-2 py-1.5 rounded-xl text-xs font-bold text-center bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
                               />
                               <span className="text-xs text-slate-400 font-semibold">%</span>
@@ -726,6 +739,8 @@ export const StockEntryModule = ({
                             <input
                               type="number"
                               step="0.01"
+                              min="0"
+                              placeholder="Opcional"
                               value={unit.cost_price_usd}
                               onChange={(e) => handleUpdateUnit(item.id, idx, 'cost_price_usd', e.target.value)}
                               className="w-28 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
@@ -736,23 +751,30 @@ export const StockEntryModule = ({
                             <input
                               type="number"
                               step="0.01"
+                              min="0"
+                              placeholder="Opcional"
                               value={unit.suggested_price_usd}
                               onChange={(e) => handleUpdateUnit(item.id, idx, 'suggested_price_usd', e.target.value)}
                               className="w-28 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
                             />
                           </TableCell>
 
-                          <TableCell className="w-20 text-center">
-                            {unit.imei && !hasError ? (
-                              <span className="inline-flex p-1 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-                                <Check className="w-3.5 h-3.5" />
-                              </span>
-                            ) : hasError ? (
-                              <span className="inline-flex p-1 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+                          <TableCell className="w-24 text-center">
+                            {hasError ? (
+                              <span className="inline-flex p-1 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400" title="IMEI/Serial repetido">
                                 <X className="w-3.5 h-3.5" />
                               </span>
+                            ) : completeness.complete ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                <Check className="w-3.5 h-3.5" /> Completo
+                              </span>
                             ) : (
-                              <span className="text-[10px] text-slate-400 font-semibold">Pendente</span>
+                              <span
+                                className="text-[10px] text-slate-400 font-semibold"
+                                title={`Pode ser completado depois: ${completeness.missing.join(', ')}`}
+                              >
+                                Incompleto
+                              </span>
                             )}
                           </TableCell>
                         </TableRow>
@@ -783,8 +805,8 @@ export const StockEntryModule = ({
                         </div>
 
                         <Input
-                          label="IMEI / Serial"
-                          placeholder="354890123456789"
+                          label="IMEI / Serial (opcional)"
+                          placeholder="Opcional"
                           value={unit.imei}
                           onChange={(e) => handleUpdateUnit(item.id, idx, 'imei', e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
                           error={isDbDuplicate ? 'Já cadastrado no sistema' : isBatchDuplicate ? 'Duplicado no lote' : ''}
@@ -792,30 +814,31 @@ export const StockEntryModule = ({
 
                         <div className="grid grid-cols-2 gap-2">
                           <Select
-                            label="Cor"
+                            label="Cor (opcional)"
                             value={unit.color}
                             onChange={(e) => handleUpdateUnit(item.id, idx, 'color', e.target.value)}
-                            options={COLOR_OPTIONS.map(c => ({ value: c, label: c }))}
+                            options={[{ value: '', label: 'Não informada' }, ...COLOR_OPTIONS.map(c => ({ value: c, label: c }))]}
                           />
                           <Input
-                            label="Saúde Bateria (%)"
+                            label="Bateria % (opcional)"
                             type="number"
                             min="0"
                             max="100"
+                            placeholder="—"
                             value={unit.battery_health}
-                            onChange={(e) => handleUpdateUnit(item.id, idx, 'battery_health', parseInt(e.target.value, 10) || 0)}
+                            onChange={(e) => handleUpdateUnit(item.id, idx, 'battery_health', e.target.value)}
                           />
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
                           <CurrencyInput
-                            label="Custo (USD)"
+                            label="Custo individual (opcional)"
                             value={unit.cost_price_usd}
                             onChange={(val) => handleUpdateUnit(item.id, idx, 'cost_price_usd', val)}
                             currency="USD"
                           />
                           <CurrencyInput
-                            label="Preço Sugerido (USD)"
+                            label="Preço sugerido (opcional)"
                             value={unit.suggested_price_usd}
                             onChange={(val) => handleUpdateUnit(item.id, idx, 'suggested_price_usd', val)}
                             currency="USD"
@@ -860,10 +883,8 @@ export const StockEntryModule = ({
                   </div>
 
                   <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                    <span className="text-[11px] font-semibold text-slate-400">IMEIs Preenchidos</span>
-                    <div className={`text-lg font-black mt-0.5 ${
-                      batchValidation.filledCount === batchValidation.totalUnits ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-500'
-                    }`}>
+                    <span className="text-[11px] font-semibold text-slate-400">IMEIs Informados (opcional)</span>
+                    <div className="text-lg font-black mt-0.5 text-slate-900 dark:text-white">
                       {batchValidation.filledCount} / {batchValidation.totalUnits}
                     </div>
                   </div>
@@ -871,7 +892,7 @@ export const StockEntryModule = ({
                   <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
                     <span className="text-[11px] font-semibold text-slate-400">Custo Total do Lote</span>
                     <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
-                      {formatUSD(batchTotalCost)}
+                      {batchTotalCost > 0 ? formatUSD(batchTotalCost) : '—'}
                     </div>
                   </div>
                 </div>
@@ -887,17 +908,20 @@ export const StockEntryModule = ({
                   ))}
                   <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white pt-1">
                     <span>Preço Sugerido Total</span>
-                    <span>{formatUSD(batchTotalSuggestedPrice)}</span>
+                    <span>{batchTotalSuggestedPrice > 0 ? formatUSD(batchTotalSuggestedPrice) : '—'}</span>
                   </div>
+                  <p className="text-[11px] text-slate-400 pt-1">
+                    Nenhum IMEI é exigido: cadastre por quantidade agora e complete IMEI, cor e bateria depois em Estoque → Aparelhos Individuais.
+                  </p>
                 </div>
               </div>
 
               {/* Ação Principal */}
               <div className="flex flex-col items-end gap-2 shrink-0">
-                {submitError && (
+                {(submitError || batchValidation.errors[0]) && (
                   <div className="text-xs font-bold text-rose-500 flex items-center gap-1.5 max-w-sm">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{submitError}</span>
+                    <span>{submitError || batchValidation.errors[0]}</span>
                   </div>
                 )}
 
@@ -984,7 +1008,7 @@ export const StockEntryModule = ({
                     Prévia da Importação ({importValidation.total} linhas encontradas)
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Revise os dados antes de cadastrar. Linhas com erro serão bloqueadas ou desconsideradas.
+                    Revise os dados antes de cadastrar. IMEI, cor, bateria e valores são opcionais; só modelo ausente ou IMEI repetido bloqueiam a linha.
                   </p>
                 </div>
 
@@ -1021,7 +1045,7 @@ export const StockEntryModule = ({
                 </div>
 
                 <div className="p-4 rounded-2xl bg-rose-50/60 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60">
-                  <span className="text-xs text-rose-700 dark:text-rose-300 font-semibold">Campos Ausentes</span>
+                  <span className="text-xs text-rose-700 dark:text-rose-300 font-semibold">Modelo Ausente</span>
                   <div className="text-xl font-black text-rose-600 dark:text-rose-400 mt-1">
                     {importValidation.missingFields}
                   </div>
@@ -1050,16 +1074,16 @@ export const StockEntryModule = ({
                           </span>
                         </TableCell>
                         <TableCell className="text-xs text-slate-600 dark:text-slate-300">
-                          {row.color}
+                          {formatColor(row.color)}
                         </TableCell>
                         <TableCell className="text-xs font-semibold">
-                          {row.battery_health}%
+                          {formatBattery(row.battery_health)}
                         </TableCell>
                         <TableCell className="font-mono text-xs font-bold text-slate-900 dark:text-white">
-                          {row.imei || <span className="text-rose-500 italic">Ausente</span>}
+                          {row.imei || <span className="font-sans font-normal text-slate-400">Não informado</span>}
                         </TableCell>
                         <TableCell className="font-semibold text-slate-900 dark:text-white">
-                          {formatUSD(row.cost_price_usd)}
+                          {row.cost_price_usd > 0 ? formatUSD(row.cost_price_usd) : '—'}
                         </TableCell>
                         <TableCell>
                           {isValid ? (
@@ -1082,6 +1106,9 @@ export const StockEntryModule = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-slate-200 dark:border-slate-800">
                 <div className="text-xs text-slate-400">
                   {importValidation.validRows.length} aparelhos prontos para entrar como <strong>Disponível</strong>
+                  {importValidation.validRows.filter(r => !(r.imei || '').trim()).length > 0 && (
+                    <> ({importValidation.validRows.filter(r => !(r.imei || '').trim()).length} sem IMEI — permitido)</>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -1118,8 +1145,8 @@ export const StockEntryModule = ({
           setIsPasteModalOpen(false);
           setPasteTargetItemId(null);
         }}
-        title="Colar Lista de IMEIs"
-        subtitle={pasteTargetItem ? `Aplicando ao item: ${pasteTargetItem.model} ${pasteTargetItem.storage} — cole múltiplos IMEIs separados por quebra de linha, vírgula ou espaço.` : ''}
+        title="Colar IMEIs (opcional)"
+        subtitle={pasteTargetItem ? `Aplicando ao item: ${pasteTargetItem.model} ${pasteTargetItem.storage} — cole os IMEIs que você já tiver, separados por quebra de linha, vírgula ou espaço. As unidades sem IMEI continuam válidas.` : ''}
       >
         <div className="space-y-4">
           <textarea

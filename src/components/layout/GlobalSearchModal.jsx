@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, ShoppingBag, Users, ArrowRight, X } from 'lucide-react';
 import { IPhoneIcon } from '../common/IPhoneIcon';
-import { formatUSD, formatImei, getStatusBadge } from '../../lib/formatters';
+import { formatUSD, formatImei, formatColor, formatBattery, getStatusBadge } from '../../lib/formatters';
 
 export const GlobalSearchModal = ({ 
   isOpen, 
@@ -32,10 +32,10 @@ export const GlobalSearchModal = ({
   // Filtros de resultados
   const filteredDevices = q
     ? devices.filter(d => 
-        d.imei.toLowerCase().includes(q) || 
-        d.model.toLowerCase().includes(q) || 
-        d.storage.toLowerCase().includes(q) ||
-        d.color.toLowerCase().includes(q)
+        (d.imei || '').toLowerCase().includes(q) || 
+        (d.model || '').toLowerCase().includes(q) || 
+        (d.storage || '').toLowerCase().includes(q) ||
+        (d.color || '').toLowerCase().includes(q)
       ).slice(0, 5)
     : [];
 
@@ -116,16 +116,16 @@ export const GlobalSearchModal = ({
                           </div>
                           <div>
                             <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                              {d.model} {d.storage} — <span className="font-mono text-xs text-indigo-600 dark:text-cyan-400">{formatImei(d.imei)}</span>
+                              {d.model} {d.storage} — <span className="font-mono text-xs text-indigo-600 dark:text-cyan-400">{formatImei(d.imei, 'IMEI não informado')}</span>
                             </div>
                             <div className="text-xs text-slate-500 dark:text-slate-300">
-                              Cor: {d.color} • Bateria: {d.battery_health}% • Status: {d.status}
+                              Cor: {formatColor(d.color)} • Bateria: {formatBattery(d.battery_health)} • Status: {d.status}
                             </div>
                           </div>
                         </div>
                         <div className="text-right">
                           <div className="text-sm font-bold text-slate-900 dark:text-white">
-                            {formatUSD(d.suggested_price_usd)}
+                            {d.suggested_price_usd ? formatUSD(d.suggested_price_usd) : '—'}
                           </div>
                         </div>
                       </div>

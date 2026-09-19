@@ -10,6 +10,7 @@ import {
   INITIAL_SETTINGS,
   INITIAL_RETAILER_REFERRALS
 } from './mockData.js';
+import { DEVICE_DELETE_BLOCKED_MESSAGE } from './deviceRules.js';
 
 const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
 const supabaseUrl = env.VITE_SUPABASE_URL || '';
@@ -26,6 +27,7 @@ export const STORAGE_KEYS = {
   GRADES: 'risemobile_grades',
   RETAILERS: 'risemobile_retailers',
   DEVICES: 'risemobile_devices',
+  DELETED_DEVICES: 'risemobile_deleted_devices',
   ORDERS: 'risemobile_orders',
   INSTALLMENTS: 'risemobile_installments',
   MOVEMENTS: 'risemobile_movements',
@@ -114,6 +116,110 @@ initStorageIfNeeded();
 /* =========================================================================
    REPOSITÓRIO & CAMADA DE SERVIÇOS (SUPABASE + LOCAL STORAGE RPC ENGINE)
    ========================================================================= */
+
+/* -------------------------------------------------------------------------
+   CAMPOS OPCIONAIS DO APARELHO
+   IMEI/Serial (coluna `imei`), cor, bateria, custo e preço individuais são
+   opcionais. O identificador real do aparelho é sempre o `id` interno; o
+   IMEI/Serial só precisa ser único QUANDO informado (sem diferenciar
+   maiúsculas/minúsculas).
+   ------------------------------------------------------------------------- */
+const MAX_UNITS_PER_ITEM = 500;
+
+const cleanText = (value) => {
+  const text = (value ?? '').toString().trim();
+  return text === '' ? null : text;
+};
+
+const identifierKey = (value) => {
+  const text = cleanText(value);
+  return text ? text.toLowerCase() : null;
+};
+
+const hasValue = (value) => value !== undefined && value !== null && value !== '';
+
+const parseOptionalBattery = (value) => {
+  if (!hasValue(value)) return null;
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) return null;
+  return Math.min(100, Math.max(0, parsed));
+};
+
+// Valor da unidade quando informado; senão herda o padrão do item; senão 0.
+const pickMoney = (unitValue, defaultValue) => {
+  const parsed = parseFloat(hasValue(unitValue) ? unitValue : defaultValue);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const buildDeviceFields = (unit, defaults) => ({
+  imei: cleanText(unit.imei),
+  color: cleanText(unit.color),
+  battery_health: parseOptionalBattery(unit.battery_health),
+  cost_price_usd: pickMoney(unit.cost_price_usd, defaults.unit_cost_usd),
+  suggested_price_usd: pickMoney(unit.suggested_price_usd, defaults.suggested_price_usd)
+});
+
+// Mapa chave→texto original dos IMEIs/Seriais INFORMADOS; unidades sem IMEI são ignoradas
+// (nunca são consideradas duplicadas entre si). Lança erro se houver repetição.
+const collectUniqueIdentifiers = (units, duplicateMessage) => {
+  const seen = new Map();
+  for (const unit of units) {
+    const key = identifierKey(unit.imei);
+    if (!key) continue;
+    if (seen.has(key)) throw new Error(duplicateMessage(cleanText(unit.imei)));
+    seen.set(key, cleanText(unit.imei));
+  }
+  return seen;
+};
+
+const assertIdentifiersNotInLocalStock = (identifiers, devices, ignoreDeviceId = null) => {
+  if (identifiers.size === 0) return;
+  for (const device of devices) {
+    const key = identifierKey(device.imei);
+    if (key && identifiers.has(key) && device.id !== ignoreDeviceId) {
+      throw new Error(`O IMEI ${identifiers.get(key)} já está cadastrado no sistema.`);
+    }
+  }
+};
+
+const assertIdentifiersNotInSupabase = async (identifiers) => {
+  if (identifiers.size === 0) return;
+  const { data } = await supabase.from('devices').select('imei').is('deleted_at', null).in('imei', [...identifiers.values()]);
+  if (data && data.length > 0) {
+    throw new Error(`O IMEI ${data[0].imei} já está cadastrado no sistema.`);
+  }
+};
+
+// Traduz erros do banco em mensagens úteis (inclusive banco ainda sem a migration 017).
+const explainDeviceWriteError = (error, prefix = '') => {
+  const message = error?.message || 'erro desconhecido';
+  if (error?.code === '23505' && /imei/i.test(message)) {
+    return new Error('Já existe um aparelho cadastrado com este IMEI/Serial.');
+  }
+  if (error?.code === '23502' || /devem possuir um IMEI/i.test(message)) {
+    return new Error('O banco de dados ainda exige IMEI, cor ou bateria. Aplique a migration supabase/migrations/017_optional_device_identifiers.sql no Supabase e tente novamente.');
+  }
+  return new Error(prefix ? `${prefix}: ${message}` : message);
+};
+
+// Aceita itens só com `quantity` (gera as unidades vazias) ou com `units` já detalhadas.
+const normalizeBatchItems = (items) => items.map((item) => {
+  if (!item.model || !item.storage || !item.grade_id) {
+    throw new Error('Informe modelo, armazenamento e grade de todos os itens do lote.');
+  }
+  let units = Array.isArray(item.units) ? item.units : [];
+  if (units.length === 0) {
+    const quantity = parseInt(item.quantity, 10);
+    if (Number.isNaN(quantity) || quantity < 1) {
+      throw new Error(`O item ${item.model} ${item.storage} não possui unidades.`);
+    }
+    units = Array.from({ length: quantity }, () => ({}));
+  }
+  if (units.length > MAX_UNITS_PER_ITEM) {
+    throw new Error(`O item ${item.model} ${item.storage} excede o limite de ${MAX_UNITS_PER_ITEM} unidades por item.`);
+  }
+  return { ...item, units };
+});
 
 // Normaliza um pedido vindo do Supabase (joins) para o formato usado pelo frontend.
 // allocated_devices representa somente aparelhos ATIVOS na venda (exclui devolvidos),
@@ -321,12 +427,206 @@ export const DataService = {
   },
 
   // Devices / Estoque
+  // Trilha de auditoria (mais recentes primeiro)
+  async getAuditLogs(limit = 200) {
+    if (isLiveSupabaseConfigured) {
+      const { data, error } = await supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+      if (!error && data) return data;
+      return [];
+    }
+    return getStored(STORAGE_KEYS.AUDIT_LOGS, []).slice(0, limit);
+  },
+
+  // Estoque operacional: aparelhos removidos (soft delete) nunca entram aqui.
   async getDevices() {
     if (isLiveSupabaseConfigured) {
-      const { data, error } = await supabase.from('devices').select('*, grades(name, badge_color)').order('created_at', { ascending: false });
+      const select = () => supabase.from('devices').select('*, grades(name, badge_color)').order('created_at', { ascending: false });
+      let { data, error } = await select().is('deleted_at', null);
+      // Banco ainda sem a migration 018 (coluna deleted_at inexistente): lista sem o filtro
+      if (error && (error.code === '42703' || /deleted_at/i.test(error.message || ''))) {
+        ({ data, error } = await select());
+      }
       if (!error && data) return data;
     }
     return getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
+  },
+
+  // Somente para telas administrativas / auditoria.
+  async getDeletedDevices() {
+    if (isLiveSupabaseConfigured) {
+      const { data, error } = await supabase
+        .from('devices')
+        .select('*, grades(name, badge_color)')
+        .not('deleted_at', 'is', null)
+        .order('deleted_at', { ascending: false });
+      if (!error && data) return data;
+      return [];
+    }
+    return getStored(STORAGE_KEYS.DELETED_DEVICES, []);
+  },
+
+  // Apaga (soft delete) um aparelho cadastrado por engano. Só é permitido enquanto ele
+  // não tiver nenhum vínculo comercial. No Supabase a regra roda 100% no banco
+  // (rpc_delete_device): não há caminho alternativo pelo cliente.
+  async deleteDevice(deviceId, reason, userResponsavel = 'admin') {
+    const cleanReason = cleanText(reason);
+    if (!deviceId) throw new Error('Aparelho não informado.');
+    if (!cleanReason) throw new Error('Informe o motivo da exclusão do aparelho.');
+
+    if (isLiveSupabaseConfigured) {
+      const { data, error } = await supabase.rpc('rpc_delete_device', {
+        p_device_id: deviceId,
+        p_reason: cleanReason,
+        p_deleted_by: userResponsavel
+      });
+      if (error) {
+        if (isMissingFunctionError(error)) {
+          throw new Error('A função de exclusão ainda não existe no banco. Aplique a migration supabase/migrations/018_soft_delete_devices.sql no Supabase e tente novamente.');
+        }
+        throw new Error(error.message);
+      }
+      return data;
+    }
+
+    const devices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
+    const device = devices.find(d => d.id === deviceId);
+    if (!device) {
+      const alreadyRemoved = getStored(STORAGE_KEYS.DELETED_DEVICES, []).some(d => d.id === deviceId);
+      throw new Error(alreadyRemoved ? 'Este aparelho já foi removido do estoque.' : 'Aparelho não encontrado.');
+    }
+
+    const orders = getStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
+    const movements = getStored(STORAGE_KEYS.MOVEMENTS, INITIAL_MOVEMENTS);
+    const adjustments = getStored(STORAGE_KEYS.ADJUSTMENTS, []);
+    const isLinked = device.status !== 'Disponível'
+      || orders.some(o => [...(o.allocated_devices || []), ...(o.returned_devices || [])].some(d => d.device_id === deviceId))
+      || movements.some(m => m.device_id === deviceId && m.movement_type !== 'Entrada')
+      || adjustments.some(a => a.device_id === deviceId);
+    if (isLinked) throw new Error(DEVICE_DELETE_BLOCKED_MESSAGE);
+
+    const deletedAt = new Date().toISOString();
+    const removed = {
+      ...device,
+      status: 'Removido',
+      deleted_at: deletedAt,
+      deleted_by: userResponsavel || 'admin',
+      deletion_reason: cleanReason,
+      updated_at: deletedAt
+    };
+    const grade = getStored(STORAGE_KEYS.GRADES, INITIAL_GRADES).find(g => g.id === device.grade_id);
+
+    setStored(STORAGE_KEYS.DEVICES, devices.filter(d => d.id !== deviceId));
+    setStored(STORAGE_KEYS.DELETED_DEVICES, [removed, ...getStored(STORAGE_KEYS.DELETED_DEVICES, [])]);
+    setStored(STORAGE_KEYS.AUDIT_LOGS, [{
+      id: `audit-${Date.now()}`,
+      table_name: 'devices',
+      record_id: deviceId,
+      action: 'DEVICE_SOFT_DELETED',
+      old_data: {
+        model: device.model, storage: device.storage, grade_id: device.grade_id, grade: grade?.name || null,
+        imei: device.imei || null, color: device.color || null, battery_health: device.battery_health ?? null,
+        cost_price_usd: device.cost_price_usd, suggested_price_usd: device.suggested_price_usd,
+        status: device.status, stock_entry_id: device.stock_entry_id || null
+      },
+      new_data: { status: 'Removido', deleted_at: deletedAt, deleted_by: removed.deleted_by, deletion_reason: cleanReason },
+      performed_by: removed.deleted_by,
+      created_at: deletedAt
+    }, ...getStored(STORAGE_KEYS.AUDIT_LOGS, [])]);
+
+    return { success: true, device_id: deviceId, deleted_at: deletedAt, deleted_by: removed.deleted_by };
+  },
+
+  // Completa/edita os dados opcionais de UM aparelho (sempre pelo id interno).
+  // Nunca altera o status comercial. IMEI/Serial só precisa ser único quando informado.
+  async updateDevice(deviceId, changes, userResponsavel = 'admin') {
+    if (!deviceId) throw new Error('Aparelho não informado.');
+
+    const patch = {};
+    if ('imei' in changes) patch.imei = cleanText(changes.imei);
+    if ('color' in changes) patch.color = cleanText(changes.color);
+    if ('battery_health' in changes) {
+      if (hasValue(changes.battery_health)) {
+        const battery = parseInt(changes.battery_health, 10);
+        if (Number.isNaN(battery) || battery < 0 || battery > 100) {
+          throw new Error('A saúde da bateria deve estar entre 0 e 100.');
+        }
+        patch.battery_health = battery;
+      } else {
+        patch.battery_health = null;
+      }
+    }
+    for (const field of ['cost_price_usd', 'suggested_price_usd']) {
+      if (field in changes) {
+        const value = pickMoney(changes[field], 0);
+        if (value < 0) throw new Error('Custo e preço não podem ser negativos.');
+        patch[field] = value;
+      }
+    }
+    if (Object.keys(patch).length === 0) throw new Error('Nenhuma alteração informada.');
+
+    const assertSoldPricesUntouched = (current) => {
+      const touchesMoney = ['cost_price_usd', 'suggested_price_usd'].some(
+        f => f in patch && Number(patch[f]) !== Number(current[f] || 0)
+      );
+      if (current.status === 'Vendido' && touchesMoney) {
+        throw new Error('O custo e o preço de um aparelho já vendido não podem ser alterados.');
+      }
+    };
+
+    if (isLiveSupabaseConfigured) {
+      const { data: current } = await supabase.from('devices').select('*').eq('id', deviceId).single();
+      if (!current) throw new Error('Aparelho não encontrado.');
+      assertSoldPricesUntouched(current);
+
+      if (patch.imei) {
+        const { data: clash } = await supabase.from('devices').select('id').is('deleted_at', null).eq('imei', patch.imei).neq('id', deviceId).limit(1);
+        if (clash && clash.length > 0) throw new Error(`O IMEI ${patch.imei} já está cadastrado no sistema.`);
+      }
+
+      const { data, error } = await supabase
+        .from('devices')
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq('id', deviceId)
+        .select('*, grades(name, badge_color)')
+        .single();
+      if (error) throw explainDeviceWriteError(error, 'Erro ao atualizar aparelho');
+
+      await supabase.from('audit_logs').insert({
+        table_name: 'devices',
+        record_id: deviceId,
+        action: 'UPDATE_DEVICE_DETAILS',
+        old_data: Object.fromEntries(Object.keys(patch).map(k => [k, current[k] ?? null])),
+        new_data: patch,
+        performed_by: userResponsavel
+      });
+      return data;
+    }
+
+    const devices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
+    const current = devices.find(d => d.id === deviceId);
+    if (!current) throw new Error('Aparelho não encontrado.');
+    assertSoldPricesUntouched(current);
+
+    if (patch.imei) {
+      assertIdentifiersNotInLocalStock(new Map([[patch.imei.toLowerCase(), patch.imei]]), devices, deviceId);
+    }
+
+    const updated = { ...current, ...patch, updated_at: new Date().toISOString() };
+    setStored(STORAGE_KEYS.DEVICES, devices.map(d => (d.id === deviceId ? updated : d)));
+
+    const auditLogs = getStored(STORAGE_KEYS.AUDIT_LOGS, []);
+    setStored(STORAGE_KEYS.AUDIT_LOGS, [{
+      id: `audit-${Date.now()}`,
+      table_name: 'devices',
+      record_id: deviceId,
+      action: 'UPDATE_DEVICE_DETAILS',
+      old_data: Object.fromEntries(Object.keys(patch).map(k => [k, current[k] ?? null])),
+      new_data: patch,
+      performed_by: userResponsavel,
+      created_at: new Date().toISOString()
+    }, ...auditLogs]);
+
+    return updated;
   },
 
   // Entradas de Estoque (Lotes)
@@ -349,18 +649,15 @@ export const DataService = {
       throw new Error(`Quantidade de unidades (${unitsList.length}) diverge do total do lote (${expectedQty}).`);
     }
 
-    // 1. Validação estrita de duplicidade de IMEIs dentro do próprio lote
-    const seenImeisInBatch = new Set();
-    for (const unit of unitsList) {
-      const imei = (unit.imei || '').trim();
-      if (!imei) {
-        throw new Error('Todas as unidades devem possuir um IMEI ou Serial preenchido.');
-      }
-      if (seenImeisInBatch.has(imei)) {
-        throw new Error(`IMEI duplicado encontrado no mesmo lote de entrada: ${imei}`);
-      }
-      seenImeisInBatch.add(imei);
+    if (!batchConfig.model || !batchConfig.storage || !batchConfig.grade_id) {
+      throw new Error('Informe modelo, armazenamento e grade do lote.');
     }
+
+    // 1. IMEI/Serial é opcional: só valida duplicidade dentro do lote para os informados
+    const batchIdentifiers = collectUniqueIdentifiers(
+      unitsList,
+      (imei) => `IMEI duplicado encontrado no mesmo lote de entrada: ${imei}`
+    );
 
     // 2. Se estiver usando Supabase ao vivo, tenta executar via RPC ou via tabelas diretamente
     if (isLiveSupabaseConfigured) {
@@ -371,8 +668,8 @@ export const DataService = {
           p_storage: batchConfig.storage,
           p_grade_id: batchConfig.grade_id,
           p_quantity: expectedQty,
-          p_unit_cost_usd: parseFloat(batchConfig.unit_cost_usd) || 0,
-          p_suggested_price_usd: parseFloat(batchConfig.suggested_price_usd) || 0,
+          p_unit_cost_usd: pickMoney(batchConfig.unit_cost_usd, 0),
+          p_suggested_price_usd: pickMoney(batchConfig.suggested_price_usd, 0),
           p_notes: batchConfig.notes || '',
           p_created_by: userResponsavel,
           p_source: 'manual',
@@ -391,7 +688,7 @@ export const DataService = {
         );
 
         if (!isFnMissing) {
-          throw new Error(error.message);
+          throw explainDeviceWriteError(error);
         }
       } catch (rpcErr) {
         if (!rpcErr.message?.includes('Could not find the function') && !rpcErr.message?.includes('schema cache')) {
@@ -400,20 +697,10 @@ export const DataService = {
       }
 
       // Fallback para Supabase Direto (Tabelas stock_entries, devices, stock_movements)
-      // Valida duplicidade contra o banco Supabase
-      const { data: existingInDb } = await supabase
-        .from('devices')
-        .select('imei')
-        .in('imei', unitsList.map(u => u.imei.trim()));
+      await assertIdentifiersNotInSupabase(batchIdentifiers);
 
-      if (existingInDb && existingInDb.length > 0) {
-        throw new Error(`O IMEI ${existingInDb[0].imei} já está cadastrado no sistema.`);
-      }
-
-      let totalCost = 0;
-      unitsList.forEach(u => {
-        totalCost += (parseFloat(u.cost_price_usd !== undefined ? u.cost_price_usd : batchConfig.unit_cost_usd) || 0);
-      });
+      const unitFields = unitsList.map(u => buildDeviceFields(u, batchConfig));
+      const totalCost = unitFields.reduce((sum, f) => sum + f.cost_price_usd, 0);
 
       // Inserir registro do lote em stock_entries
       let entryId = null;
@@ -425,8 +712,8 @@ export const DataService = {
           grade_id: batchConfig.grade_id,
           quantity: expectedQty,
           total_cost_usd: totalCost,
-          unit_cost_usd: parseFloat(batchConfig.unit_cost_usd) || 0,
-          suggested_price_usd: parseFloat(batchConfig.suggested_price_usd) || 0,
+          unit_cost_usd: pickMoney(batchConfig.unit_cost_usd, 0),
+          suggested_price_usd: pickMoney(batchConfig.suggested_price_usd, 0),
           notes: batchConfig.notes || '',
           created_by: userResponsavel,
           source: 'manual'
@@ -438,22 +725,18 @@ export const DataService = {
       }
 
       // Inserir aparelhos em devices
-      const devicesToInsert = unitsList.map(u => ({
+      const devicesToInsert = unitFields.map(fields => ({
         model: batchConfig.model,
         storage: batchConfig.storage,
         grade_id: batchConfig.grade_id,
-        color: u.color || 'Padrão',
-        battery_health: parseInt(u.battery_health, 10) || 100,
-        imei: u.imei.trim(),
-        cost_price_usd: parseFloat(u.cost_price_usd !== undefined ? u.cost_price_usd : batchConfig.unit_cost_usd) || 0,
-        suggested_price_usd: parseFloat(u.suggested_price_usd !== undefined ? u.suggested_price_usd : batchConfig.suggested_price_usd) || 0,
+        ...fields,
         status: 'Disponível',
         stock_entry_id: entryId,
         source: 'manual'
       }));
 
       const { data: insertedDevices, error: devErr } = await supabase.from('devices').insert(devicesToInsert).select();
-      if (devErr) throw new Error(`Erro ao cadastrar aparelhos: ${devErr.message}`);
+      if (devErr) throw explainDeviceWriteError(devErr, 'Erro ao cadastrar aparelhos');
 
       // Inserir histórico em stock_movements
       if (insertedDevices && insertedDevices.length > 0) {
@@ -479,15 +762,9 @@ export const DataService = {
 
     // Engine Local RPC Transacional Atômica (Fallback Offline / LocalStorage)
     const existingDevices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
-    const existingImeis = new Set(existingDevices.map(d => (d.imei || '').trim()));
 
-    // 2. Validação estrita contra a base já cadastrada
-    for (const unit of unitsList) {
-      const imei = (unit.imei || '').trim();
-      if (existingImeis.has(imei)) {
-        throw new Error(`O IMEI ${imei} já está cadastrado no sistema.`);
-      }
-    }
+    // 2. Validação contra a base já cadastrada (somente IMEIs/Seriais informados)
+    assertIdentifiersNotInLocalStock(batchIdentifiers, existingDevices);
 
     const entryId = `entry-${Date.now()}`;
     const timestamp = new Date().toISOString();
@@ -497,9 +774,9 @@ export const DataService = {
     const newMovements = [];
 
     for (let i = 0; i < unitsList.length; i++) {
-      const u = unitsList[i];
-      const cost = parseFloat(u.cost_price_usd !== undefined ? u.cost_price_usd : batchConfig.unit_cost_usd) || 0;
-      const price = parseFloat(u.suggested_price_usd !== undefined ? u.suggested_price_usd : batchConfig.suggested_price_usd) || (cost * 1.25);
+      const fields = buildDeviceFields(unitsList[i], batchConfig);
+      const cost = fields.cost_price_usd;
+      const price = fields.suggested_price_usd || (cost * 1.25);
       totalCost += cost;
 
       const deviceId = `dev-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`;
@@ -508,10 +785,7 @@ export const DataService = {
         model: batchConfig.model,
         storage: batchConfig.storage,
         grade_id: batchConfig.grade_id,
-        color: u.color || 'Padrão',
-        battery_health: parseInt(u.battery_health, 10) || 100,
-        imei: u.imei.trim(),
-        cost_price_usd: cost,
+        ...fields,
         suggested_price_usd: price,
         status: 'Disponível',
         stock_entry_id: entryId,
@@ -571,28 +845,18 @@ export const DataService = {
   // Entrada de Lote com Múltiplos Itens/Modelos: 1 lote -> N itens -> N devices
   // header: { reference_code, notes }
   // items: [{ model, storage, grade_id, unit_cost_usd, suggested_price_usd, units: [{imei, color, battery_health, cost_price_usd, suggested_price_usd}] }]
-  async createStockEntryBatchMulti(header, items, userResponsavel = 'admin') {
-    if (!items || items.length === 0) {
+  // Cada item pode trazer `units` detalhadas OU apenas `quantity` (unidades criadas vazias).
+  async createStockEntryBatchMulti(header, rawItems, userResponsavel = 'admin') {
+    if (!rawItems || rawItems.length === 0) {
       throw new Error('O lote precisa conter ao menos um item/configuração.');
     }
+    const items = normalizeBatchItems(rawItems);
 
-    // 1. Validação estrita de duplicidade de IMEIs entre TODOS os itens do lote
-    const seenImeisInBatch = new Set();
-    for (const item of items) {
-      if (!item.units || item.units.length === 0) {
-        throw new Error(`O item ${item.model} ${item.storage} não possui unidades.`);
-      }
-      for (const unit of item.units) {
-        const imei = (unit.imei || '').trim();
-        if (!imei) {
-          throw new Error('Todas as unidades devem possuir um IMEI ou Serial preenchido.');
-        }
-        if (seenImeisInBatch.has(imei)) {
-          throw new Error(`IMEI duplicado entre itens/configurações do mesmo lote: ${imei}`);
-        }
-        seenImeisInBatch.add(imei);
-      }
-    }
+    // 1. IMEI/Serial é opcional: só valida duplicidade (entre TODOS os itens do lote) dos informados
+    const batchIdentifiers = collectUniqueIdentifiers(
+      items.flatMap(item => item.units),
+      (imei) => `IMEI duplicado entre itens/configurações do mesmo lote: ${imei}`
+    );
 
     if (isLiveSupabaseConfigured) {
       try {
@@ -611,7 +875,7 @@ export const DataService = {
           error.code === 'PGRST202'
         );
         if (!isFnMissing) {
-          throw new Error(error.message);
+          throw explainDeviceWriteError(error);
         }
       } catch (rpcErr) {
         if (!rpcErr.message?.includes('Could not find the function') && !rpcErr.message?.includes('schema cache')) {
@@ -620,11 +884,7 @@ export const DataService = {
       }
 
       // Fluxo Direto Supabase (fallback caso a RPC ainda não tenha sido aplicada)
-      const allImeis = items.flatMap(it => it.units.map(u => u.imei.trim()));
-      const { data: existingInDb } = await supabase.from('devices').select('imei').in('imei', allImeis);
-      if (existingInDb && existingInDb.length > 0) {
-        throw new Error(`O IMEI ${existingInDb[0].imei} já está cadastrado no sistema.`);
-      }
+      await assertIdentifiersNotInSupabase(batchIdentifiers);
 
       let grandTotalCost = 0;
       let grandTotalQty = 0;
@@ -663,11 +923,7 @@ export const DataService = {
           model: item.model,
           storage: item.storage,
           grade_id: item.grade_id,
-          color: u.color || 'Padrão',
-          battery_health: parseInt(u.battery_health, 10) || 100,
-          imei: u.imei.trim(),
-          cost_price_usd: parseFloat(u.cost_price_usd !== undefined ? u.cost_price_usd : unitCost) || 0,
-          suggested_price_usd: parseFloat(u.suggested_price_usd !== undefined ? u.suggested_price_usd : suggestedPrice) || 0,
+          ...buildDeviceFields(u, item),
           status: 'Disponível',
           stock_entry_id: stockEntryId,
           stock_entry_item_id: itemId,
@@ -675,7 +931,7 @@ export const DataService = {
         }));
 
         const { data: insertedDevices, error: devErr } = await supabase.from('devices').insert(devicesToInsert).select();
-        if (devErr) throw new Error(`Erro ao cadastrar aparelhos de ${item.model} ${item.storage}: ${devErr.message}`);
+        if (devErr) throw explainDeviceWriteError(devErr, `Erro ao cadastrar aparelhos de ${item.model} ${item.storage}`);
 
         const itemTotalCost = (insertedDevices || []).reduce((s, d) => s + (parseFloat(d.cost_price_usd) || 0), 0);
         await supabase.from('stock_entry_items').update({ total_cost_usd: itemTotalCost }).eq('id', itemId);
@@ -720,13 +976,7 @@ export const DataService = {
 
     // Engine Local RPC Transacional Atômica (Fallback Offline / LocalStorage)
     const existingDevices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
-    const existingImeis = new Set(existingDevices.map(d => (d.imei || '').trim()));
-
-    for (const imei of seenImeisInBatch) {
-      if (existingImeis.has(imei)) {
-        throw new Error(`O IMEI ${imei} já está cadastrado no sistema.`);
-      }
-    }
+    assertIdentifiersNotInLocalStock(batchIdentifiers, existingDevices);
 
     const stockEntryId = `entry-${Date.now()}`;
     const timestamp = new Date().toISOString();
@@ -745,9 +995,9 @@ export const DataService = {
       const itemDevices = [];
 
       for (let i = 0; i < item.units.length; i++) {
-        const u = item.units[i];
-        const cost = parseFloat(u.cost_price_usd !== undefined ? u.cost_price_usd : unitCost) || 0;
-        const price = parseFloat(u.suggested_price_usd !== undefined ? u.suggested_price_usd : suggestedPrice) || (cost * 1.25);
+        const fields = buildDeviceFields(item.units[i], item);
+        const cost = fields.cost_price_usd;
+        const price = fields.suggested_price_usd || (cost * 1.25);
         itemTotalCost += cost;
 
         const deviceId = `dev-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`;
@@ -756,10 +1006,7 @@ export const DataService = {
           model: item.model,
           storage: item.storage,
           grade_id: item.grade_id,
-          color: u.color || 'Padrão',
-          battery_health: parseInt(u.battery_health, 10) || 100,
-          imei: u.imei.trim(),
-          cost_price_usd: cost,
+          ...fields,
           suggested_price_usd: price,
           status: 'Disponível',
           stock_entry_id: stockEntryId,
@@ -835,17 +1082,11 @@ export const DataService = {
       throw new Error('Nenhum aparelho para importar.');
     }
 
-    const seenImeisInBatch = new Set();
-    for (const unit of devicesList) {
-      const imei = (unit.imei || '').trim();
-      if (!imei) {
-        throw new Error('Todas as linhas devem possuir um IMEI ou Serial válido.');
-      }
-      if (seenImeisInBatch.has(imei)) {
-        throw new Error(`IMEI duplicado encontrado no arquivo de importação: ${imei}`);
-      }
-      seenImeisInBatch.add(imei);
-    }
+    // Linhas sem IMEI/Serial são permitidas e nunca são duplicadas entre si
+    const batchIdentifiers = collectUniqueIdentifiers(
+      devicesList,
+      (imei) => `IMEI duplicado encontrado no arquivo de importação: ${imei}`
+    );
 
     const batchCode = customBatchCode || `IMP-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
     let totalCost = 0;
@@ -854,15 +1095,8 @@ export const DataService = {
     });
 
     if (isLiveSupabaseConfigured) {
-      // Valida duplicidade contra o banco Supabase
-      const { data: existingInDb } = await supabase
-        .from('devices')
-        .select('imei')
-        .in('imei', devicesList.map(u => u.imei.trim()));
-
-      if (existingInDb && existingInDb.length > 0) {
-        throw new Error(`O IMEI ${existingInDb[0].imei} já está cadastrado no sistema.`);
-      }
+      // Valida duplicidade contra o banco Supabase (apenas IMEIs informados)
+      await assertIdentifiersNotInSupabase(batchIdentifiers);
 
       let entryId = null;
       try {
@@ -889,18 +1123,14 @@ export const DataService = {
         model: u.model || 'iPhone 13',
         storage: u.storage || '128GB',
         grade_id: u.grade_id || '11111111-1111-1111-1111-111111111111',
-        color: u.color || 'Padrão',
-        battery_health: parseInt(u.battery_health, 10) || 100,
-        imei: u.imei.trim(),
-        cost_price_usd: parseFloat(u.cost_price_usd) || 0,
-        suggested_price_usd: parseFloat(u.suggested_price_usd) || 0,
+        ...buildDeviceFields(u, {}),
         status: 'Disponível',
         stock_entry_id: entryId,
         source: 'import'
       }));
 
       const { data: insertedDevices, error: devErr } = await supabase.from('devices').insert(devicesToInsert).select();
-      if (devErr) throw new Error(`Erro ao importar aparelhos: ${devErr.message}`);
+      if (devErr) throw explainDeviceWriteError(devErr, 'Erro ao importar aparelhos');
 
       if (insertedDevices && insertedDevices.length > 0) {
         const movementsToInsert = insertedDevices.map(d => ({
@@ -924,14 +1154,7 @@ export const DataService = {
     }
 
     const existingDevices = getStored(STORAGE_KEYS.DEVICES, INITIAL_DEVICES);
-    const existingImeis = new Set(existingDevices.map(d => (d.imei || '').trim()));
-
-    for (const unit of devicesList) {
-      const imei = (unit.imei || '').trim();
-      if (existingImeis.has(imei)) {
-        throw new Error(`O IMEI ${imei} já está cadastrado no sistema.`);
-      }
-    }
+    assertIdentifiersNotInLocalStock(batchIdentifiers, existingDevices);
 
     const timestamp = new Date().toISOString();
     const entryId = `entry-${Date.now()}`;
@@ -941,8 +1164,9 @@ export const DataService = {
 
     for (let i = 0; i < devicesList.length; i++) {
       const u = devicesList[i];
-      const cost = parseFloat(u.cost_price_usd) || 0;
-      const price = parseFloat(u.suggested_price_usd) || (cost * 1.25);
+      const fields = buildDeviceFields(u, {});
+      const cost = fields.cost_price_usd;
+      const price = fields.suggested_price_usd || (cost * 1.25);
 
       const deviceId = `dev-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`;
       const newDev = {
@@ -950,10 +1174,7 @@ export const DataService = {
         model: u.model || 'iPhone 13',
         storage: u.storage || '128GB',
         grade_id: u.grade_id || '11111111-1111-1111-1111-111111111111',
-        color: u.color || 'Padrão',
-        battery_health: parseInt(u.battery_health, 10) || 100,
-        imei: u.imei.trim(),
-        cost_price_usd: cost,
+        ...fields,
         suggested_price_usd: price,
         status: 'Disponível',
         stock_entry_id: entryId,
@@ -1039,9 +1260,10 @@ export const DataService = {
 
     for (const rawDev of externalDevicesList) {
       const externalId = rawDev.external_id ? rawDev.external_id.toString().trim() : null;
-      const imei = rawDev.imei ? rawDev.imei.toString().trim() : null;
+      const imei = cleanText(rawDev.imei);
 
-      if (!imei || !rawDev.model) continue;
+      // Sem IMEI, o aparelho externo só é identificável pelo external_id
+      if ((!imei && !externalId) || !rawDev.model) continue;
 
       if (externalId) {
         if (seenExternalIdsInBatch.has(externalId)) {
@@ -1050,14 +1272,16 @@ export const DataService = {
         seenExternalIdsInBatch.add(externalId);
       }
 
-      if (seenImeisInBatch.has(imei)) {
-        throw new Error(`IMEI duplicado no mesmo lote de sincronização: ${imei}`);
+      if (imei) {
+        if (seenImeisInBatch.has(imei.toLowerCase())) {
+          throw new Error(`IMEI duplicado no mesmo lote de sincronização: ${imei}`);
+        }
+        seenImeisInBatch.add(imei.toLowerCase());
       }
-      seenImeisInBatch.add(imei);
 
       // Localiza registro existente por external_id ou imei
-      const existingIdx = updatedDevices.findIndex(d => 
-        (externalId && d.external_id === externalId) || d.imei === imei
+      const existingIdx = updatedDevices.findIndex(d =>
+        (externalId && d.external_id === externalId) || (imei && identifierKey(d.imei) === imei.toLowerCase())
       );
 
       if (existingIdx !== -1) {
@@ -1075,11 +1299,12 @@ export const DataService = {
           ...current,
           external_id: externalId || current.external_id || `ext-${imei}`,
           external_source: sourceName,
+          imei: current.imei || imei,
           model: rawDev.model || current.model,
           storage: rawDev.storage || current.storage,
           grade_id: rawDev.grade_id || current.grade_id,
-          color: rawDev.color || current.color,
-          battery_health: rawDev.battery_health !== undefined ? rawDev.battery_health : current.battery_health,
+          color: cleanText(rawDev.color) || current.color || null,
+          battery_health: hasValue(rawDev.battery_health) ? parseOptionalBattery(rawDev.battery_health) : (current.battery_health ?? null),
           cost_price_usd: rawDev.cost_price_usd !== undefined ? rawDev.cost_price_usd : current.cost_price_usd,
           suggested_price_usd: rawDev.suggested_price_usd !== undefined ? rawDev.suggested_price_usd : current.suggested_price_usd,
           status: preservedStatus,
@@ -1097,8 +1322,8 @@ export const DataService = {
           model: rawDev.model,
           storage: rawDev.storage || '128GB',
           grade_id: rawDev.grade_id || '11111111-1111-1111-1111-111111111111',
-          color: rawDev.color || 'Padrão',
-          battery_health: rawDev.battery_health !== undefined ? rawDev.battery_health : 100,
+          color: cleanText(rawDev.color),
+          battery_health: parseOptionalBattery(rawDev.battery_health),
           imei: imei,
           cost_price_usd: rawDev.cost_price_usd || 0,
           suggested_price_usd: rawDev.suggested_price_usd || ((rawDev.cost_price_usd || 0) * 1.25),
@@ -1928,10 +2153,10 @@ export const DataService = {
 
       for (const alloc of allocations) {
         if (alloc.status === 'Devolvido') {
-          throw new Error(`Aparelho ${alloc.devices?.imei} já foi devolvido anteriormente.`);
+          throw new Error(`Aparelho ${alloc.devices?.imei || alloc.device_id} já foi devolvido anteriormente.`);
         }
         if (alloc.status !== 'Vendido') {
-          throw new Error(`Aparelho ${alloc.devices?.imei} não está Vendido e não pode ser devolvido.`);
+          throw new Error(`Aparelho ${alloc.devices?.imei || alloc.device_id} não está Vendido e não pode ser devolvido.`);
         }
 
         const matchingItem = (orderItems || []).find(it =>
@@ -2842,6 +3067,7 @@ export const DataService = {
   clearAllOperationalData() {
     setStored(STORAGE_KEYS.RETAILERS, []);
     setStored(STORAGE_KEYS.DEVICES, []);
+    setStored(STORAGE_KEYS.DELETED_DEVICES, []);
     setStored(STORAGE_KEYS.ORDERS, []);
     setStored(STORAGE_KEYS.INSTALLMENTS, []);
     setStored(STORAGE_KEYS.MOVEMENTS, []);

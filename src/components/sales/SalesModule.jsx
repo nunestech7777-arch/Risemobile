@@ -21,7 +21,7 @@ import { Modal, Drawer } from '../ui/Modal';
 import { ConfirmDialog, EmptyState } from '../ui/EmptyState';
 import { FinalizeSaleModal } from './FinalizeSaleModal';
 import { RegisterReturnModal } from './RegisterReturnModal';
-import { formatUSD, formatImei, formatDate, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
+import { formatUSD, formatImei, formatColor, formatBattery, formatDate, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
 
 const IPHONE_MODELS = [
   'iPhone 13', 'iPhone 13 mini', 'iPhone 13 Pro', 'iPhone 13 Pro Max',
@@ -91,7 +91,7 @@ export const SalesModule = ({
       const matchSearch = !q || 
         o.order_number.toLowerCase().includes(q) || 
         o.retailer_name.toLowerCase().includes(q) ||
-        (o.allocated_devices && o.allocated_devices.some(d => d.imei?.includes(q)));
+        (o.allocated_devices && o.allocated_devices.some(d => (d.imei || '').toLowerCase().includes(q)));
       const matchStatus = selectedStatus === 'ALL' || o.status === selectedStatus;
       return matchSearch && matchStatus;
     });
@@ -624,7 +624,7 @@ export const SalesModule = ({
               <div className="flex items-center gap-2 mb-2">
                 <Sparkles className="w-4 h-4 text-indigo-600 dark:text-cyan-400" />
                 <span className="text-xs font-bold text-indigo-950 dark:text-indigo-200">
-                  Seleção Automática de Aparelhos ({autoAllocatedPreview.length} IMEIs selecionados por maior saúde de bateria):
+                  Seleção Automática de Aparelhos ({autoAllocatedPreview.length} selecionados por maior saúde de bateria; IMEI é opcional):
                 </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 mt-2">
@@ -633,11 +633,11 @@ export const SalesModule = ({
                   return (
                     <div key={dev.id} className="p-2 bg-white dark:bg-white/[0.04] dark:backdrop-blur-sm rounded-xl border border-indigo-100 dark:border-white/10 text-xs flex items-center justify-between">
                       <div>
-                        <div className="font-mono font-bold text-slate-900 dark:text-white">{formatImei(dev.imei)}</div>
-                        <div className="text-[10px] text-slate-400">{dev.model} • {dev.color}</div>
+                        <div className="font-mono font-bold text-slate-900 dark:text-white">{formatImei(dev.imei, 'IMEI não informado')}</div>
+                        <div className="text-[10px] text-slate-400">{dev.model}{dev.color ? ` • ${dev.color}` : ''}</div>
                       </div>
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${bStyle.color}`}>
-                        {dev.battery_health}%
+                        {formatBattery(dev.battery_health)}
                       </span>
                     </div>
                   );
@@ -774,10 +774,10 @@ export const SalesModule = ({
                     <div key={idx} className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
                       <div>
                         <div className="text-sm font-bold text-slate-900 dark:text-white">
-                          {dev.model} {dev.storage} — <span className="font-mono text-xs text-indigo-600 dark:text-indigo-400">{formatImei(dev.imei)}</span>
+                          {dev.model} {dev.storage} — <span className="font-mono text-xs text-indigo-600 dark:text-indigo-400">{formatImei(dev.imei, 'IMEI não informado')}</span>
                         </div>
                         <div className="text-xs text-slate-400 mt-0.5">
-                          Cor: {dev.color} • Bateria: {dev.battery_health}%
+                          Cor: {formatColor(dev.color)} • Bateria: {formatBattery(dev.battery_health)}
                         </div>
                       </div>
                       <Badge variant={dev.separated ? 'mint' : 'lavender'} size="sm">
@@ -800,7 +800,7 @@ export const SalesModule = ({
                     <div key={idx} className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-800 flex items-center justify-between opacity-70">
                       <div>
                         <div className="text-sm font-bold text-slate-700 dark:text-slate-300">
-                          {dev.model} {dev.storage} — <span className="font-mono text-xs text-slate-400">{formatImei(dev.imei)}</span>
+                          {dev.model} {dev.storage} — <span className="font-mono text-xs text-slate-400">{formatImei(dev.imei, 'IMEI não informado')}</span>
                         </div>
                       </div>
                       <Badge variant="lavender" size="sm">Devolvido</Badge>
@@ -829,7 +829,7 @@ export const SalesModule = ({
                       <div className="mt-2 space-y-1">
                         {(ret.items || []).map((item, iIdx) => (
                           <div key={iIdx} className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                            <span>{formatImei(item.imei)} — {item.model} {item.storage}</span>
+                            <span>{formatImei(item.imei, 'IMEI não informado')} — {item.model} {item.storage}</span>
                             <span className="font-bold text-rose-500">-{formatUSD(item.original_sale_price_usd)}</span>
                           </div>
                         ))}

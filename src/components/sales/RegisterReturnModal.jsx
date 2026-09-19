@@ -3,7 +3,7 @@ import { Undo2, AlertTriangle } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Input';
 import { Modal } from '../ui/Modal';
-import { formatUSD, formatImei } from '../../lib/formatters';
+import { formatUSD, formatImeiLabel } from '../../lib/formatters';
 
 const RETURN_REASONS = [
   { value: 'Troca solicitada', label: 'Troca solicitada pelo lojista' },
@@ -121,7 +121,7 @@ export const RegisterReturnModal = ({
                       {dev.model} <span className="text-xs text-slate-400 font-normal">({dev.storage})</span>
                     </div>
                     <div className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                      IMEI: {formatImei(dev.imei)}
+                      {formatImeiLabel(dev.imei)}
                     </div>
                   </div>
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
