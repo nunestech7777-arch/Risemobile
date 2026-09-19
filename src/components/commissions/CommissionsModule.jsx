@@ -89,6 +89,7 @@ export const CommissionsModule = ({
   // Form State da Indicação
   const [formData, setFormData] = useState({
     referrer_name: '',
+    agent_id: '',
     retailer_id: '',
     commission_per_unit_usd: '1.00',
     notes: '',
@@ -321,6 +322,23 @@ export const CommissionsModule = ({
     setEditingReferral(null);
     setFormData({
       referrer_name: '',
+      agent_id: '',
+      retailer_id: availableRetailersForCreate[0]?.id || '',
+      commission_per_unit_usd: '1.00',
+      notes: '',
+      status: 'Ativo'
+    });
+    setIsModalOpen(true);
+  };
+
+  // Vincular um lojista a um comissionado já cadastrado (abre o formulário de indicação
+  // com o indicador preenchido e travado no comissionado escolhido)
+  const handleOpenLinkRetailerModal = (agent, e) => {
+    e?.stopPropagation();
+    setEditingReferral(null);
+    setFormData({
+      referrer_name: agent.name,
+      agent_id: agent.id,
       retailer_id: availableRetailersForCreate[0]?.id || '',
       commission_per_unit_usd: '1.00',
       notes: '',
@@ -335,6 +353,7 @@ export const CommissionsModule = ({
     setEditingReferral(ref);
     setFormData({
       referrer_name: ref.referrer_name || '',
+      agent_id: ref.agent_id || '',
       retailer_id: ref.retailer_id || '',
       commission_per_unit_usd: String(ref.commission_per_unit_usd || '1.00'),
       notes: ref.notes || '',
@@ -360,6 +379,7 @@ export const CommissionsModule = ({
     const payload = {
       ...(editingReferral ? { id: editingReferral.id } : {}),
       referrer_name: formData.referrer_name.trim(),
+      ...(formData.agent_id ? { agent_id: formData.agent_id } : {}),
       retailer_id: formData.retailer_id,
       retailer_name: ret?.store_name || formData.retailer_name || 'Lojista',
       commission_per_unit_usd: parseFloat(formData.commission_per_unit_usd) || 0,
@@ -367,10 +387,14 @@ export const CommissionsModule = ({
       status: formData.status
     };
 
-    if (onSaveReferral) {
-      await onSaveReferral(payload);
+    try {
+      if (onSaveReferral) {
+        await onSaveReferral(payload);
+      }
+      setIsModalOpen(false);
+    } catch (err) {
+      alert(err.message || 'Não foi possível salvar a indicação.');
     }
-    setIsModalOpen(false);
   };
 
   const handleDelete = async (id, name, e) => {
@@ -1074,8 +1098,15 @@ export const CommissionsModule = ({
                       <TableCell className="font-mono text-xs text-slate-700 dark:text-slate-300">
                         {agent.email}
                       </TableCell>
-                      <TableCell className="text-xs font-semibold text-purple-600 dark:text-purple-400">
-                        {linkedStores.length} {linkedStores.length === 1 ? 'loja' : 'lojas'}
+                      <TableCell className="text-xs">
+                        <span className="font-semibold text-purple-600 dark:text-purple-400">
+                          {linkedStores.length} {linkedStores.length === 1 ? 'loja' : 'lojas'}
+                        </span>
+                        {linkedStores.length > 0 && (
+                          <p className="text-[11px] text-slate-400 font-normal max-w-[220px] truncate" title={linkedStores.map(r => r.retailer_name).join(', ')}>
+                            {linkedStores.map(r => r.retailer_name).filter(Boolean).join(', ')}
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -1096,6 +1127,16 @@ export const CommissionsModule = ({
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={(e) => handleOpenLinkRetailerModal(agent, e)}
+                            icon={Building2}
+                            title="Vincular um lojista a este comissionado"
+                            className="text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                          >
+                            Vincular Lojista
+                          </Button>
                           <Button
                             variant="ghost"
                             size="xs"
@@ -1248,6 +1289,7 @@ export const CommissionsModule = ({
             placeholder="Ex: Pedro, João Silva..."
             value={formData.referrer_name}
             onChange={(e) => setFormData({ ...formData, referrer_name: e.target.value })}
+            disabled={Boolean(formData.agent_id) && !editingReferral}
             required
           />
 

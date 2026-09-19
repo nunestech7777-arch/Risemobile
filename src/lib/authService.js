@@ -189,6 +189,14 @@ export const AuthService = {
 
         if (error) {
           console.warn('[Supabase Auth Warning]:', error.message);
+          // O Supabase só devolve este erro quando e-mail e senha estão corretos,
+          // então revelar o motivo não permite descobrir contas de terceiros.
+          if (error.code === 'email_not_confirmed' || /email not confirmed/i.test(error.message || '')) {
+            return {
+              success: false,
+              error: 'Seu e-mail ainda não foi confirmado. Abra o link de confirmação enviado para o seu e-mail (veja também o spam) e tente entrar novamente.'
+            };
+          }
           return {
             success: false,
             error: 'E-mail ou senha incorretos.'

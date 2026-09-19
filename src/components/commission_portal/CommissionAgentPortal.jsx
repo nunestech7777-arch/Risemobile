@@ -24,6 +24,7 @@ import { Badge } from '../ui/Badge';
 import { Input } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { EmptyState } from '../ui/EmptyState';
+import { MetricCard } from '../ui/MetricCard';
 import { RiseMobileLogo } from '../common/RiseMobileLogo';
 import { ShaderBackground } from '../ui/adisyon-shader';
 import { formatUSD, formatDate } from '../../lib/formatters';
@@ -319,69 +320,41 @@ export const CommissionAgentPortal = ({
           </div>
         )}
 
-        {/* 3 Metric Cards */}
+        {/* 3 Metric Cards - White Dashboard Style */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          
           {/* Card 1: Total Comprado */}
-          <Card className="p-6 bg-gradient-to-br from-[#EDE8F8] to-[#E5DCF8] dark:from-purple-950/40 dark:to-indigo-950/30 border-purple-200/70 dark:border-purple-500/20 shadow-sm relative overflow-hidden flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-purple-900 dark:text-purple-300">
-                Peças Comissionadas
-              </span>
-              <div className="w-9 h-9 rounded-2xl bg-purple-200/80 dark:bg-purple-900/50 flex items-center justify-center text-purple-800 dark:text-purple-300 shadow-inner">
-                <ShoppingBag className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <p className="text-3xl font-black text-slate-950 dark:text-white tracking-tight">
-                {isLoading ? '...' : (portalData?.total_units || 0)}
-              </p>
-              <p className="text-xs text-purple-900/80 dark:text-purple-300/80 mt-1 font-medium">
-                aparelhos faturados no período
-              </p>
-            </div>
-          </Card>
+          <MetricCard
+            variant="default"
+            title="Peças Comissionadas"
+            subtitle="Faturamento no período selecionado"
+            value={isLoading ? '...' : `${portalData?.total_units || 0} un.`}
+            secondaryValue={`${portalData?.total_units || 0} aparelhos comissionados`}
+            badgeText="Unidades"
+            badgeType="neutral"
+          />
 
           {/* Card 2: Comissão Acumulada */}
-          <Card className="p-6 bg-gradient-to-br from-[#FAF3D6] to-[#F5E8BA] dark:from-amber-950/40 dark:to-yellow-950/30 border-amber-200/70 dark:border-amber-500/20 shadow-sm relative overflow-hidden flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
-                Comissão Acumulada
-              </span>
-              <div className="w-9 h-9 rounded-2xl bg-amber-200/80 dark:bg-amber-900/50 flex items-center justify-center text-amber-800 dark:text-amber-300 shadow-inner">
-                <DollarSign className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <p className="text-3xl font-black text-slate-950 dark:text-white tracking-tight">
-                {isLoading ? '...' : formatUSD(portalData?.total_commission_usd || 0)}
-              </p>
-              <p className="text-xs text-amber-900/80 dark:text-amber-300/80 mt-1 font-medium">
-                ≈ R$ {totalCommissionBRL.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (câmbio R$ {exchangeRate.toFixed(2)})
-              </p>
-            </div>
-          </Card>
+          <MetricCard
+            variant="default"
+            title="Comissão Acumulada"
+            subtitle={`Câmbio R$ ${exchangeRate.toFixed(2)}`}
+            value={isLoading ? '...' : formatUSD(portalData?.total_commission_usd || 0)}
+            secondaryValue={`≈ R$ ${totalCommissionBRL.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            badgeText="A Receber"
+            badgeType="neutral"
+          />
 
           {/* Card 3: Lojistas Indicados */}
-          <Card className="p-6 bg-gradient-to-br from-[#E2F5EA] to-[#D0EFE0] dark:from-emerald-950/40 dark:to-teal-950/30 border-emerald-200/70 dark:border-emerald-500/20 shadow-sm relative overflow-hidden flex flex-col justify-between sm:col-span-2 lg:col-span-1">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
-                Lojistas Indicados
-              </span>
-              <div className="w-9 h-9 rounded-2xl bg-emerald-200/80 dark:bg-emerald-900/50 flex items-center justify-center text-emerald-800 dark:text-emerald-300 shadow-inner">
-                <Building2 className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <p className="text-3xl font-black text-slate-950 dark:text-white tracking-tight">
-                {isLoading ? '...' : (portalData?.active_retailers_count || 0)}
-              </p>
-              <p className="text-xs text-emerald-900/80 dark:text-emerald-300/80 mt-1 font-medium">
-                {portalData?.referrals?.length || 0} lojas cadastradas no total
-              </p>
-            </div>
-          </Card>
-
+          <MetricCard
+            variant="default"
+            title="Lojistas Indicados"
+            subtitle={`${portalData?.referrals?.length || 0} lojas cadastradas no total`}
+            value={isLoading ? '...' : `${portalData?.active_retailers_count || 0}`}
+            secondaryValue={`${portalData?.active_retailers_count || 0} lojas com compras ativas`}
+            badgeText="Parceiros"
+            badgeType="neutral"
+            className="sm:col-span-2 lg:col-span-1"
+          />
         </div>
 
         {/* Lojistas Indicados (Cards no Mobile / Tabela no Desktop) */}
