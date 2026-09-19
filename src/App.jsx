@@ -248,6 +248,7 @@ export function App() {
   const handleSaveCommissionAgent = async (agent) => {
     const res = await DataService.saveCommissionAgent(agent);
     await loadAllData();
+    if (res?.notice) alert(res.notice);
     return res;
   };
 

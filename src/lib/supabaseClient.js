@@ -158,6 +158,130 @@ const normalizeOrderFromSupabase = (o) => {
   };
 };
 
+// -----------------------------------------------------------------------------
+// Comissionados no modo Supabase. Nenhuma senha é guardada em tabela: a conta de
+// acesso é uma conta do Supabase Auth (senha com hash gerenciada pelo Supabase).
+// -----------------------------------------------------------------------------
+const isUuid = (value) =>
+  typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+
+const isMissingFunctionError = (error) => Boolean(error) && (
+  error.code === 'PGRST202' ||
+  error.code === '42883' ||
+  /Could not find the function|schema cache/i.test(error.message || '')
+);
+
+// Cria a conta de acesso do comissionado SEM mexer na sessão do administrador
+// (cliente separado, sem persistência de sessão).
+const createAgentAuthAccount = async (email, password) => {
+  if (!password || password.length < 6) {
+    return {
+      ok: false,
+      notice: 'A senha precisa ter ao menos 6 caracteres. O comissionado foi cadastrado, mas a conta de acesso NÃO foi criada.'
+    };
+  }
+
+  const signupClient = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  });
+
+  const { data, error } = await signupClient.auth.signUp({ email, password });
+  if (error) {
+    return {
+      ok: false,
+      notice: `O comissionado foi cadastrado, mas a conta de acesso não pôde ser criada automaticamente (${error.message}). Crie um usuário com o mesmo e-mail em Supabase → Authentication → Users.`
+    };
+  }
+
+  const identities = data?.user?.identities;
+  if (data?.user && Array.isArray(identities) && identities.length === 0) {
+    return {
+      ok: true,
+      userId: null,
+      notice: 'Já existe uma conta com este e-mail. A senha atual dela foi mantida (a senha informada aqui não foi aplicada).'
+    };
+  }
+
+  return {
+    ok: true,
+    userId: data?.user?.id || null,
+    notice: data?.session ? '' : 'O comissionado precisa confirmar o e-mail (mensagem enviada pelo Supabase) antes do primeiro acesso.'
+  };
+};
+
+// Vincula indicações antigas (criadas só com o nome do indicador) ao comissionado
+const linkReferralsToAgentLive = async (agentRow) => {
+  const { data: refs } = await supabase
+    .from('retailer_referrals')
+    .select('id, referrer_name')
+    .is('agent_id', null);
+  const target = (agentRow.name || '').trim().toLowerCase();
+  const ids = (refs || [])
+    .filter(r => (r.referrer_name || '').trim().toLowerCase() === target)
+    .map(r => r.id);
+  if (ids.length > 0) {
+    await supabase.from('retailer_referrals').update({ agent_id: agentRow.id }).in('id', ids);
+  }
+};
+
+const saveCommissionAgentLive = async (agent, cleanEmail) => {
+  const base = {
+    name: agent.name.trim(),
+    phone: agent.phone ? agent.phone.trim() : '',
+    is_active: agent.is_active !== undefined ? Boolean(agent.is_active) : true,
+    updated_at: new Date().toISOString()
+  };
+
+  if (isUuid(agent.id)) {
+    const { data: current, error: currentError } = await supabase
+      .from('commission_agents')
+      .select('email')
+      .eq('id', agent.id)
+      .single();
+    if (currentError || !current) throw new Error('Comissionado não encontrado.');
+    if ((current.email || '').toLowerCase() !== cleanEmail) {
+      throw new Error('O e-mail de acesso não pode ser alterado depois do cadastro. Exclua o comissionado e cadastre novamente com o novo e-mail.');
+    }
+
+    const { data, error } = await supabase
+      .from('commission_agents')
+      .update(base)
+      .eq('id', agent.id)
+      .select()
+      .single();
+    if (error) throw new Error(`Erro ao salvar comissionado: ${error.message}`);
+    await linkReferralsToAgentLive(data);
+    return data;
+  }
+
+  const { data: created, error } = await supabase
+    .from('commission_agents')
+    .insert({ ...base, email: cleanEmail })
+    .select()
+    .single();
+  if (error) {
+    if (error.code === '23505') throw new Error(`O e-mail ${cleanEmail} já está em uso por outro comissionado.`);
+    throw new Error(`Erro ao cadastrar comissionado: ${error.message}`);
+  }
+
+  const account = await createAgentAuthAccount(cleanEmail, agent.password);
+  let saved = created;
+  if (account.userId) {
+    const { data: linked } = await supabase
+      .from('commission_agents')
+      .update({ user_id: account.userId })
+      .eq('id', created.id)
+      .select()
+      .single();
+    if (linked) saved = linked;
+  }
+
+  await linkReferralsToAgentLive(saved);
+
+  // A senha volta apenas nesta resposta (para o compartilhamento inicial); nunca é gravada.
+  return { ...saved, password: agent.password || '', notice: account.notice || '' };
+};
+
 export const DataService = {
   // Grades
   async getGrades() {
@@ -2277,10 +2401,48 @@ export const DataService = {
 
   // Comissões por Indicação de Lojista
   async getRetailerReferrals() {
+    if (isLiveSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('retailer_referrals')
+        .select('*, retailers(store_name)')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        return data.map(({ retailers, ...ref }) => ({ ...ref, retailer_name: retailers?.store_name || '' }));
+      }
+    }
     return getStored(STORAGE_KEYS.RETAILER_REFERRALS, INITIAL_RETAILER_REFERRALS);
   },
 
   async saveRetailerReferral(referral) {
+    if (isLiveSupabaseConfigured && supabase) {
+      const referrerName = (referral.referrer_name || '').trim();
+      let agentId = isUuid(referral.agent_id) ? referral.agent_id : null;
+
+      // Sem agente informado: vincula pelo nome do indicador (igualdade exata)
+      if (!agentId && referrerName) {
+        const { data: agents } = await supabase.from('commission_agents').select('id, name');
+        const match = (agents || []).find(a => (a.name || '').trim().toLowerCase() === referrerName.toLowerCase());
+        agentId = match?.id || null;
+      }
+
+      const payload = {
+        agent_id: agentId,
+        referrer_name: referrerName,
+        retailer_id: referral.retailer_id,
+        commission_per_unit_usd: parseFloat(referral.commission_per_unit_usd) || 0,
+        notes: referral.notes || '',
+        status: referral.status === 'Inativo' ? 'Inativo' : 'Ativo',
+        updated_at: new Date().toISOString()
+      };
+
+      const query = isUuid(referral.id)
+        ? supabase.from('retailer_referrals').update(payload).eq('id', referral.id)
+        : supabase.from('retailer_referrals').insert(payload);
+      const { data, error } = await query.select().single();
+      if (error) throw new Error(`Erro ao salvar indicação: ${error.message}`);
+      return { ...data, retailer_name: referral.retailer_name || '' };
+    }
+
     const list = getStored(STORAGE_KEYS.RETAILER_REFERRALS, INITIAL_RETAILER_REFERRALS);
     let updated;
     if (referral.id) {
@@ -2299,6 +2461,11 @@ export const DataService = {
   },
 
   async deleteRetailerReferral(id) {
+    if (isLiveSupabaseConfigured && supabase) {
+      const { error } = await supabase.from('retailer_referrals').delete().eq('id', id);
+      if (error) throw new Error(`Erro ao excluir indicação: ${error.message}`);
+      return true;
+    }
     const list = getStored(STORAGE_KEYS.RETAILER_REFERRALS, INITIAL_RETAILER_REFERRALS);
     const updated = list.filter(r => r.id !== id);
     setStored(STORAGE_KEYS.RETAILER_REFERRALS, updated);
@@ -2328,6 +2495,11 @@ export const DataService = {
     }
 
     const cleanEmail = agent.email.trim().toLowerCase();
+
+    if (isLiveSupabaseConfigured && supabase) {
+      return saveCommissionAgentLive(agent, cleanEmail);
+    }
+
     const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
 
     // Validar duplicidade de e-mail em outro cadastro
@@ -2347,18 +2519,6 @@ export const DataService = {
       created_at: agent.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
-
-    if (isLiveSupabaseConfigured && supabase) {
-      const { data, error } = await supabase
-        .from('commission_agents')
-        .upsert(payload)
-        .select();
-      if (error) {
-        console.error('Erro ao salvar comissionado no Supabase:', error);
-      } else if (data && data[0]) {
-        // Atualiza localmente também
-      }
-    }
 
     let updatedList;
     if (agent.id) {
@@ -2387,19 +2547,24 @@ export const DataService = {
 
   async setCommissionAgentStatus(id, isActive) {
     if (!id) throw new Error('ID do comissionado não informado.');
+
+    if (isLiveSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('commission_agents')
+        .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error || !data) throw new Error(`Erro ao alterar o status do comissionado: ${error?.message || 'não encontrado'}`);
+      return data;
+    }
+
     const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
     const target = agents.find(a => a.id === id);
     if (!target) throw new Error('Comissionado não encontrado.');
 
     target.is_active = Boolean(isActive);
     target.updated_at = new Date().toISOString();
-
-    if (isLiveSupabaseConfigured && supabase) {
-      await supabase
-        .from('commission_agents')
-        .update({ is_active: target.is_active, updated_at: target.updated_at })
-        .eq('id', id);
-    }
 
     const updated = agents.map(a => a.id === id ? { ...a, is_active: target.is_active } : a);
     setStored(STORAGE_KEYS.COMMISSION_AGENTS, updated);
@@ -2408,6 +2573,28 @@ export const DataService = {
 
   async resetCommissionAgentPassword(id, newPassword) {
     if (!id) throw new Error('ID do comissionado não informado.');
+
+    // Modo Supabase: a senha é do Supabase Auth (com hash) e não pode ser definida
+    // pelo navegador. O comissionado recebe um link oficial para criar a nova senha.
+    if (isLiveSupabaseConfigured && supabase) {
+      const { data: agent, error } = await supabase
+        .from('commission_agents')
+        .select('email')
+        .eq('id', id)
+        .single();
+      if (error || !agent) throw new Error('Comissionado não encontrado.');
+
+      const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(agent.email, { redirectTo });
+      if (resetError) throw new Error(`Não foi possível enviar o e-mail de redefinição: ${resetError.message}`);
+
+      return {
+        success: true,
+        mode: 'email',
+        message: `Enviamos um e-mail de redefinição de senha para ${agent.email}. O comissionado define a nova senha pelo link recebido.`
+      };
+    }
+
     if (!newPassword || newPassword.length < 4) {
       throw new Error('A nova senha deve ter pelo menos 4 caracteres.');
     }
@@ -2418,13 +2605,6 @@ export const DataService = {
     target.password = newPassword;
     target.updated_at = new Date().toISOString();
 
-    if (isLiveSupabaseConfigured && supabase) {
-      await supabase
-        .from('commission_agents')
-        .update({ password_hash: newPassword, updated_at: target.updated_at })
-        .eq('id', id);
-    }
-
     const updatedAgent = { ...target, password: newPassword, password_hash: newPassword };
     const updated = agents.map(a => a.id === id ? updatedAgent : a);
     setStored(STORAGE_KEYS.COMMISSION_AGENTS, updated);
@@ -2434,7 +2614,9 @@ export const DataService = {
   async deleteCommissionAgent(id) {
     if (!id) throw new Error('ID do comissionado não informado.');
     if (isLiveSupabaseConfigured && supabase) {
-      await supabase.from('commission_agents').delete().eq('id', id);
+      const { error } = await supabase.from('commission_agents').delete().eq('id', id);
+      if (error) throw new Error(`Erro ao excluir comissionado: ${error.message}`);
+      return true;
     }
     const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
     const updated = agents.filter(a => a.id !== id);
@@ -2447,6 +2629,22 @@ export const DataService = {
    * Blindado contra vazamento de dados de outros comissionados, custos, margens e estoque.
    */
   async getCommissionAgentPortalData(identifier, periodFilter = {}) {
+    // Modo Supabase: o banco identifica o comissionado pelo login (JWT); o
+    // identificador recebido aqui é ignorado, então não dá para consultar outro agente.
+    if (isLiveSupabaseConfigured && supabase) {
+      const { data, error } = await supabase.rpc('get_commission_agent_portal_data', {
+        p_start_date: periodFilter.startDate ? new Date(`${periodFilter.startDate}T00:00:00`).toISOString() : null,
+        p_end_date: periodFilter.endDate ? new Date(`${periodFilter.endDate}T23:59:59.999`).toISOString() : null
+      });
+      if (error) {
+        if (isMissingFunctionError(error)) {
+          throw new Error('Portal indisponível: a atualização do banco de dados (migração 015) ainda não foi aplicada.');
+        }
+        throw new Error(error.message || 'Não foi possível carregar as informações de comissão.');
+      }
+      return data;
+    }
+
     const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
     
     // Identifier can be a string (agentId/userId/email) or an object ({ agentId, email, userId })

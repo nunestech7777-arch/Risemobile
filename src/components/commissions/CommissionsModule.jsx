@@ -507,8 +507,13 @@ export const CommissionsModule = ({
     }
     if (onResetCommissionAgentPassword && selectedAgentForReset) {
       try {
-        await onResetCommissionAgentPassword(selectedAgentForReset.id, newPasswordValue);
+        const resetResult = await onResetCommissionAgentPassword(selectedAgentForReset.id, newPasswordValue);
         setIsResetPasswordModalOpen(false);
+        // Modo Supabase: a senha é redefinida por e-mail (nada para compartilhar)
+        if (resetResult?.mode === 'email') {
+          alert(resetResult.message);
+          return;
+        }
         // Abrir compartilhamento
         setSelectedAgentForShare({
           ...selectedAgentForReset,
@@ -545,7 +550,7 @@ export const CommissionsModule = ({
   const copyShareTextToClipboard = () => {
     if (!selectedAgentForShare) return;
     const portalUrl = typeof window !== 'undefined' ? `${window.location.origin}` : 'https://app.risemobile.com';
-    const text = `🌟 *Acesso ao Portal do Comissionado — RiseMobile*\n\nOlá *${selectedAgentForShare.name}*, seu acesso exclusivo para acompanhar suas comissões já está ativo!\n\n🔗 *Link de Acesso:* ${portalUrl}\n👤 *E-mail:* ${selectedAgentForShare.email}\n🔑 *Senha:* ${selectedAgentForShare.password || '123456'}\n\nNo portal você acompanha em tempo real suas peças vendidas, valores e extrato das lojas indicadas. Qualquer dúvida estamos à disposição!`;
+    const text = `🌟 *Acesso ao Portal do Comissionado — RiseMobile*\n\nOlá *${selectedAgentForShare.name}*, seu acesso exclusivo para acompanhar suas comissões já está ativo!\n\n🔗 *Link de Acesso:* ${portalUrl}\n👤 *E-mail:* ${selectedAgentForShare.email}\n🔑 *Senha:* ${selectedAgentForShare.password || '(a senha definida no cadastro; se esquecer, use "Esqueci minha senha" na tela de login)'}\n\nNo portal você acompanha em tempo real suas peças vendidas, valores e extrato das lojas indicadas. Qualquer dúvida estamos à disposição!`;
 
     navigator.clipboard.writeText(text).then(() => {
       setCopiedNotification(true);
@@ -1466,7 +1471,7 @@ export const CommissionsModule = ({
       >
         <div className="space-y-4">
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-[#0B1220] border border-slate-200 dark:border-white/10 font-mono text-xs whitespace-pre-line text-slate-800 dark:text-slate-200 leading-relaxed select-all">
-            {`🌟 *Acesso ao Portal do Comissionado — RiseMobile*\n\nOlá *${selectedAgentForShare?.name}*, seu acesso exclusivo para acompanhar suas comissões já está ativo!\n\n🔗 *Link de Acesso:* ${typeof window !== 'undefined' ? window.location.origin : 'https://app.risemobile.com'}\n👤 *E-mail:* ${selectedAgentForShare?.email}\n🔑 *Senha:* ${selectedAgentForShare?.password || '123456'}\n\nNo portal você acompanha em tempo real suas peças vendidas, valores e extrato das lojas indicadas. Qualquer dúvida estamos à disposição!`}
+            {`🌟 *Acesso ao Portal do Comissionado — RiseMobile*\n\nOlá *${selectedAgentForShare?.name}*, seu acesso exclusivo para acompanhar suas comissões já está ativo!\n\n🔗 *Link de Acesso:* ${typeof window !== 'undefined' ? window.location.origin : 'https://app.risemobile.com'}\n👤 *E-mail:* ${selectedAgentForShare?.email}\n🔑 *Senha:* ${selectedAgentForShare?.password || '(a senha definida no cadastro; se esquecer, use "Esqueci minha senha" na tela de login)'}\n\nNo portal você acompanha em tempo real suas peças vendidas, valores e extrato das lojas indicadas. Qualquer dúvida estamos à disposição!`}
           </div>
 
           <div className="flex items-center justify-between pt-2">

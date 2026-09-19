@@ -30,6 +30,122 @@ const notifyListeners = (event, session) => {
   });
 };
 
+// -----------------------------------------------------------------------------
+// Autorização (modo Supabase): o papel do usuário vem SEMPRE do banco
+// (função get_my_access, migration 015) e a falha em confirmar o papel NEGA o
+// acesso (falha fechada). Nada aqui é confiável no navegador; a proteção real
+// dos dados é feita pelas políticas RLS do banco.
+// -----------------------------------------------------------------------------
+const ACCESS_CACHE_TTL_MS = 60 * 1000;
+const accessCache = new Map();
+
+const DENIED_NO_PERMISSION = 'Sua conta não tem permissão de acesso ao sistema. Solicite a liberação à administração da RiseMobile.';
+const DENIED_INACTIVE = 'Acesso desativado. Entre em contato com a administração da RiseMobile.';
+const DENIED_UNVERIFIED = 'Não foi possível verificar suas permissões. Tente novamente.';
+
+const isMissingFunctionError = (error) => Boolean(error) && (
+  error.code === 'PGRST202' ||
+  error.code === '42883' ||
+  /Could not find the function|schema cache/i.test(error.message || '')
+);
+
+const isMissingTableError = (error) => Boolean(error) && (
+  error.code === '42P01' ||
+  error.code === 'PGRST205' ||
+  /does not exist|schema cache/i.test(error.message || '')
+);
+
+const mapAccess = (payload) => {
+  const role = payload?.role;
+  if (role === 'admin') return { allowed: true, role: 'admin' };
+  if (role === 'commission_agent') {
+    return {
+      allowed: true,
+      role: 'commission_agent',
+      agent: { id: payload.agent_id, name: payload.name, phone: payload.phone || '' }
+    };
+  }
+  if (role === 'inactive_agent') return { allowed: false, error: DENIED_INACTIVE };
+  return { allowed: false, error: DENIED_NO_PERMISSION };
+};
+
+// Compatibilidade enquanto a migration 015 ainda não foi aplicada no banco:
+// consulta direta, mas qualquer erro inesperado continua negando o acesso.
+const resolveLegacyAccess = async (user) => {
+  const email = (user.email || '').toLowerCase();
+  const columns = 'id, name, phone, is_active';
+
+  let { data: agent, error } = await supabase
+    .from('commission_agents')
+    .select(columns)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (!error && !agent && email) {
+    ({ data: agent, error } = await supabase
+      .from('commission_agents')
+      .select(columns)
+      .eq('email', email)
+      .maybeSingle());
+  }
+
+  if (error) {
+    // Tabela ainda não existe (migration 014 não aplicada): não há comissionados.
+    if (isMissingTableError(error)) return { allowed: true, role: 'admin' };
+    return { allowed: false, error: DENIED_UNVERIFIED };
+  }
+  if (!agent) return { allowed: true, role: 'admin' };
+  if (!agent.is_active) return { allowed: false, error: DENIED_INACTIVE };
+  return {
+    allowed: true,
+    role: 'commission_agent',
+    agent: { id: agent.id, name: agent.name, phone: agent.phone || '' }
+  };
+};
+
+const resolveLiveAccess = async (user) => {
+  const cached = accessCache.get(user.id);
+  if (cached && Date.now() - cached.ts < ACCESS_CACHE_TTL_MS) return cached.result;
+
+  let result;
+  try {
+    const { data, error } = await supabase.rpc('get_my_access');
+    if (!error && data) {
+      result = mapAccess(data);
+    } else if (isMissingFunctionError(error)) {
+      result = await resolveLegacyAccess(user);
+    } else {
+      result = { allowed: false, error: DENIED_UNVERIFIED };
+    }
+  } catch (err) {
+    console.error('Erro ao verificar permissões:', err);
+    result = { allowed: false, error: DENIED_UNVERIFIED };
+  }
+
+  if (result.allowed) accessCache.set(user.id, { ts: Date.now(), result });
+  else accessCache.delete(user.id);
+  return result;
+};
+
+// Devolve uma cópia da sessão com o papel do comissionado no metadata do usuário
+const applyAccessToSession = (session, access) => {
+  if (!session?.user) return session;
+  if (access?.role !== 'commission_agent') return session;
+  return {
+    ...session,
+    user: {
+      ...session.user,
+      user_metadata: {
+        ...session.user.user_metadata,
+        role: 'commission_agent',
+        name: access.agent.name,
+        agent_id: access.agent.id,
+        phone: access.agent.phone
+      }
+    }
+  };
+};
+
 export const AuthService = {
   /**
    * Realiza login com E-mail e Senha via Supabase Auth
@@ -79,32 +195,20 @@ export const AuthService = {
           };
         }
 
-        const session = data?.session || null;
-        const user = data?.user || null;
+        const rawSession = data?.session || null;
+        const rawUser = data?.user || null;
 
-        // Verificar se é comissionado e se está ativo
-        if (user) {
-          const { data: agentData } = await supabase
-            .from('commission_agents')
-            .select('*')
-            .or(`user_id.eq.${user.id},email.eq.${cleanEmail}`)
-            .maybeSingle();
-
-          if (agentData) {
-            if (!agentData.is_active) {
-              await supabase.auth.signOut();
-              return {
-                success: false,
-                error: 'Acesso desativado. Entre em contato com a administração da RiseMobile.'
-              };
-            }
-            user.user_metadata = {
-              ...user.user_metadata,
-              role: 'commission_agent',
-              name: agentData.name,
-              agent_id: agentData.id
-            };
+        // Autorização com falha fechada: sem permissão confirmada, não entra.
+        let session = rawSession;
+        let user = rawUser;
+        if (rawUser) {
+          const access = await resolveLiveAccess(rawUser);
+          if (!access.allowed) {
+            await supabase.auth.signOut();
+            return { success: false, error: access.error };
           }
+          session = applyAccessToSession(rawSession, access);
+          user = session?.user || applyAccessToSession({ user: rawUser }, access).user;
         }
 
         memoryAuthSession = session;
@@ -251,6 +355,7 @@ export const AuthService = {
       console.warn('Erro ao deslogar no Supabase:', err);
     } finally {
       memoryAuthSession = null;
+      accessCache.clear();
       try {
         if (typeof localStorage !== 'undefined') {
           localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -355,8 +460,15 @@ export const AuthService = {
       if (isLiveSupabaseConfigured && supabase) {
         const { data } = await supabase.auth.getSession();
         if (data?.session) {
-          memoryAuthSession = data.session;
-          return data.session;
+          // O papel é reconfirmado no banco a cada carregamento (falha fechada)
+          const access = await resolveLiveAccess(data.session.user);
+          if (!access.allowed) {
+            await this.signOut();
+            return null;
+          }
+          const enriched = applyAccessToSession(data.session, access);
+          memoryAuthSession = enriched;
+          return enriched;
         }
       }
 
@@ -400,8 +512,22 @@ export const AuthService = {
     let supabaseUnsubscribe = null;
     if (isLiveSupabaseConfigured && supabase) {
       const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-        memoryAuthSession = session;
-        callback(event, session);
+        if (!session?.user) {
+          memoryAuthSession = session;
+          callback(event, session);
+          return;
+        }
+        // Fora do callback síncrono para não travar o cliente do Supabase
+        setTimeout(async () => {
+          const access = await resolveLiveAccess(session.user);
+          if (!access.allowed) {
+            await AuthService.signOut();
+            return;
+          }
+          const enriched = applyAccessToSession(session, access);
+          memoryAuthSession = enriched;
+          callback(event, enriched);
+        }, 0);
       });
       supabaseUnsubscribe = authListener?.subscription?.unsubscribe;
     }
