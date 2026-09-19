@@ -34,7 +34,18 @@ export const AuthService = {
   /**
    * Realiza login com E-mail e Senha via Supabase Auth
    */
-  async signInWithPassword({ email, password }) {
+  async signInWithPassword(emailOrObj, passwordArg) {
+    let email = '';
+    let password = '';
+
+    if (typeof emailOrObj === 'object' && emailOrObj !== null) {
+      email = emailOrObj.email || '';
+      password = emailOrObj.password || '';
+    } else {
+      email = emailOrObj || '';
+      password = passwordArg || '';
+    }
+
     if (!email || !password) {
       return {
         success: false,
@@ -62,7 +73,6 @@ export const AuthService = {
 
         if (error) {
           console.warn('[Supabase Auth Warning]:', error.message);
-          // Mensagem genérica para proteção contra enumeração de usuários
           return {
             success: false,
             error: 'E-mail ou senha incorretos.'
@@ -71,6 +81,31 @@ export const AuthService = {
 
         const session = data?.session || null;
         const user = data?.user || null;
+
+        // Verificar se é comissionado e se está ativo
+        if (user) {
+          const { data: agentData } = await supabase
+            .from('commission_agents')
+            .select('*')
+            .or(`user_id.eq.${user.id},email.eq.${cleanEmail}`)
+            .maybeSingle();
+
+          if (agentData) {
+            if (!agentData.is_active) {
+              await supabase.auth.signOut();
+              return {
+                success: false,
+                error: 'Acesso desativado. Entre em contato com a administração da RiseMobile.'
+              };
+            }
+            user.user_metadata = {
+              ...user.user_metadata,
+              role: 'commission_agent',
+              name: agentData.name,
+              agent_id: agentData.id
+            };
+          }
+        }
 
         memoryAuthSession = session;
         if (session) {
@@ -87,7 +122,7 @@ export const AuthService = {
         return { success: true, user, session };
       } else {
         // Modo Local/Demonstração Controlado
-        // Apenas credenciais autorizadas existentes
+        // 1. Administradores padrão
         const isAuthorizedAdmin = (cleanEmail === 'admin@risemobile.com' && password === 'admin123');
         const isAuthorizedDemo = (cleanEmail === 'demo@risemobile.com' && password === 'demo123');
 
@@ -125,12 +160,75 @@ export const AuthService = {
 
           notifyListeners('SIGNED_IN', session);
           return { success: true, user: sessionUser, session };
-        } else {
-          return {
-            success: false,
-            error: 'E-mail ou senha incorretos.'
-          };
         }
+
+        // 2. Comissionados Cadastrados
+        let agents = [];
+        try {
+          if (typeof localStorage !== 'undefined') {
+            const raw = localStorage.getItem('risemobile_commission_agents');
+            if (raw) agents = JSON.parse(raw);
+          }
+        } catch {
+          agents = [];
+        }
+
+        const agent = agents.find(a => a.email && a.email.toLowerCase() === cleanEmail);
+        if (agent) {
+          if (!agent.is_active) {
+            return {
+              success: false,
+              error: 'Acesso desativado. Entre em contato com a administração da RiseMobile.'
+            };
+          }
+
+          const expectedPassword = agent.password || agent.password_hash || '123456';
+          if (password !== expectedPassword) {
+            return {
+              success: false,
+              error: 'E-mail ou senha incorretos.'
+            };
+          }
+
+          const sessionUser = {
+            id: agent.id,
+            email: cleanEmail,
+            role: 'commission_agent',
+            aud: 'authenticated',
+            user_metadata: {
+              name: agent.name,
+              role: 'commission_agent',
+              agent_id: agent.id,
+              phone: agent.phone || '',
+              avatar_initials: agent.name.slice(0, 2).toUpperCase()
+            }
+          };
+
+          const session = {
+            access_token: `rise_agent_token_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+            token_type: 'bearer',
+            expires_in: 3600 * 24 * 7,
+            expires_at: Math.floor(Date.now() / 1000) + (3600 * 24 * 7),
+            user: sessionUser
+          };
+
+          memoryAuthSession = session;
+          try {
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+            }
+          } catch {
+            // Safe storage fallback
+          }
+
+          notifyListeners('SIGNED_IN', session);
+          return { success: true, user: sessionUser, session };
+        }
+
+        return {
+          success: false,
+          error: 'E-mail ou senha incorretos.'
+        };
       }
     } catch (err) {
       console.error('Erro na autenticação:', err);

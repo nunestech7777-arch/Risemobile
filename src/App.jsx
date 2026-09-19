@@ -15,6 +15,7 @@ import { PaymentsModule } from './components/payments/PaymentsModule';
 import { CommissionsModule } from './components/commissions/CommissionsModule';
 import { ProfitModule } from './components/profit/ProfitModule';
 import { ReportsModule } from './components/reports/ReportsModule';
+import { CommissionAgentPortal } from './components/commission_portal/CommissionAgentPortal';
 import { ShaderBackground } from './components/ui/adisyon-shader';
 
 import { DataService, AuthService } from './lib/supabaseClient';
@@ -46,6 +47,7 @@ export function App() {
   const [movements, setMovements] = useState([]);
   const [adjustments, setAdjustments] = useState([]);
   const [retailerReferrals, setRetailerReferrals] = useState([]);
+  const [commissionAgents, setCommissionAgents] = useState([]);
   const [settings, setSettings] = useState({});
   const [exchangeRate, setExchangeRate] = useState(5.48);
   const [isRateLoading, setIsRateLoading] = useState(false);
@@ -58,7 +60,7 @@ export function App() {
       const rate = await fetchUsdToBrlRate();
       setExchangeRate(rate);
     } catch (err) {
-      console.error('Erro ao atualizar cotação USD/BRL:', err);
+      console.error('Erro ao atualizar taxa de câmbio:', err);
     } finally {
       setIsRateLoading(false);
     }
@@ -66,35 +68,38 @@ export function App() {
 
   useEffect(() => {
     refreshExchangeRate();
-    const intervalId = setInterval(refreshExchangeRate, 5 * 60 * 1000);
-    return () => clearInterval(intervalId);
+    const interval = setInterval(refreshExchangeRate, 1000 * 60 * 15);
+    return () => clearInterval(interval);
   }, [refreshExchangeRate]);
 
-  // Apply Theme to DOM
+  // Sync Theme with DOM
   useEffect(() => {
     const root = document.documentElement;
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const isDark = 
+      theme === 'dark' || 
+      (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    
+    if (isDark) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('risemobile_theme', theme);
+  }, [theme]);
 
-    const applyTheme = (currentTheme) => {
-      if (currentTheme === 'dark') {
-        root.classList.add('dark');
-      } else if (currentTheme === 'light') {
-        root.classList.remove('dark');
+  // Listen for System Theme changes when in "system" mode
+  useEffect(() => {
+    if (theme !== 'system') return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e) => {
+      if (e.matches) {
+        document.documentElement.classList.add('dark');
       } else {
-        // System
-        if (mediaQuery.matches) root.classList.add('dark');
-        else root.classList.remove('dark');
+        document.documentElement.classList.remove('dark');
       }
     };
-
-    applyTheme(theme);
-    localStorage.setItem('risemobile_theme', theme);
-
-    const listener = () => {
-      if (theme === 'system') applyTheme('system');
-    };
-    mediaQuery.addEventListener('change', listener);
-    return () => mediaQuery.removeEventListener('change', listener);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
   }, [theme]);
 
   // Session Initialization & Supabase Auth Event Subscription
@@ -150,9 +155,15 @@ export function App() {
     }
   };
 
-  // Load All System Data (Only when Authenticated)
+  // Load All System Data (Only when Authenticated as Admin)
   const loadAllData = useCallback(async () => {
     if (!session) return;
+    const isCommissionAgent = user?.user_metadata?.role === 'commission_agent' || user?.role === 'commission_agent';
+    if (isCommissionAgent) {
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const [
         loadedGrades, 
@@ -163,6 +174,7 @@ export function App() {
         loadedMovements,
         loadedAdjustments,
         loadedRetailerReferrals,
+        loadedCommissionAgents,
         loadedSettings
       ] = await Promise.all([
         DataService.getGrades(),
@@ -173,6 +185,7 @@ export function App() {
         DataService.getMovements(),
         DataService.getAdjustments(),
         DataService.getRetailerReferrals(),
+        DataService.getCommissionAgents(),
         DataService.getSettings()
       ]);
 
@@ -184,13 +197,14 @@ export function App() {
       setMovements(loadedMovements);
       setAdjustments(loadedAdjustments);
       setRetailerReferrals(loadedRetailerReferrals);
+      setCommissionAgents(loadedCommissionAgents);
       setSettings(loadedSettings);
     } catch (err) {
       console.error('Erro ao carregar dados:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [session]);
+  }, [session, user]);
 
   useEffect(() => {
     if (session) {
@@ -228,6 +242,31 @@ export function App() {
   const handleDeleteRetailerReferral = async (id) => {
     await DataService.deleteRetailerReferral(id);
     await loadAllData();
+  };
+
+  // Handlers para Acessos dos Comissionados
+  const handleSaveCommissionAgent = async (agent) => {
+    const res = await DataService.saveCommissionAgent(agent);
+    await loadAllData();
+    return res;
+  };
+
+  const handleSetCommissionAgentStatus = async (id, isActive) => {
+    const res = await DataService.setCommissionAgentStatus(id, isActive);
+    await loadAllData();
+    return res;
+  };
+
+  const handleResetCommissionAgentPassword = async (id, newPassword) => {
+    const res = await DataService.resetCommissionAgentPassword(id, newPassword);
+    await loadAllData();
+    return res;
+  };
+
+  const handleDeleteCommissionAgent = async (id) => {
+    const res = await DataService.deleteCommissionAgent(id);
+    await loadAllData();
+    return res;
   };
 
   const handleReserveOrder = async (orderData, items) => {
@@ -341,7 +380,21 @@ export function App() {
     );
   }
 
-  // 3. Authenticated State: Full RiseMobile System
+  // 3. Authenticated State: Commission Agent Exclusive Portal (Total Isolation)
+  const isCommissionAgent = user?.user_metadata?.role === 'commission_agent' || user?.role === 'commission_agent';
+  if (isCommissionAgent) {
+    return (
+      <CommissionAgentPortal
+        user={user}
+        exchangeRate={exchangeRate}
+        theme={theme}
+        onThemeChange={setTheme}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  // 4. Authenticated State: Full RiseMobile Administrative System
   return (
     <div className="min-h-screen bg-[#EEF2F6] dark:bg-[#030407] dark-ambient-canvas flex p-3 sm:p-4 gap-4 max-w-[1600px] mx-auto transition-colors duration-200 text-slate-900 dark:text-slate-100 relative">
       {/* 21st.dev Adisyon Waves Shader Atmosphere Layer (Dark Mode) */}
@@ -478,8 +531,13 @@ export function App() {
               orders={orders}
               retailers={retailers}
               retailerReferrals={retailerReferrals}
+              commissionAgents={commissionAgents}
               onSaveReferral={handleSaveRetailerReferral}
               onDeleteReferral={handleDeleteRetailerReferral}
+              onSaveCommissionAgent={handleSaveCommissionAgent}
+              onSetCommissionAgentStatus={handleSetCommissionAgentStatus}
+              onResetCommissionAgentPassword={handleResetCommissionAgentPassword}
+              onDeleteCommissionAgent={handleDeleteCommissionAgent}
             />
           )}
 

@@ -81,9 +81,9 @@ CREATE INDEX IF NOT EXISTS idx_devices_sync_status ON public.devices (sync_statu
 CREATE TABLE IF NOT EXISTS public.retailers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     store_name VARCHAR(200) NOT NULL,
-    contact_name VARCHAR(150) NOT NULL,
+    contact_name VARCHAR(150),
     phone VARCHAR(30),
-    whatsapp VARCHAR(30) NOT NULL,
+    whatsapp VARCHAR(30),
     document VARCHAR(50),
     city VARCHAR(100),
     state VARCHAR(10),
@@ -184,6 +184,39 @@ CREATE TABLE IF NOT EXISTS public.commissions (
     status VARCHAR(30) NOT NULL DEFAULT 'Registrado',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Tabela de Comissionados / Indicadores
+CREATE TABLE IF NOT EXISTS public.commission_agents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID UNIQUE,
+    name VARCHAR(150) NOT NULL,
+    email VARCHAR(150) UNIQUE NOT NULL,
+    phone VARCHAR(30),
+    password_hash TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_commission_agents_email ON public.commission_agents (email);
+CREATE INDEX IF NOT EXISTS idx_commission_agents_name ON public.commission_agents (name);
+
+-- Tabela de Indicações de Lojistas
+CREATE TABLE IF NOT EXISTS public.retailer_referrals (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    agent_id UUID REFERENCES public.commission_agents(id) ON DELETE SET NULL,
+    referrer_name VARCHAR(150) NOT NULL,
+    retailer_id UUID NOT NULL REFERENCES public.retailers(id) ON DELETE RESTRICT,
+    commission_per_unit_usd NUMERIC(10, 2) NOT NULL DEFAULT 1.00 CHECK (commission_per_unit_usd >= 0),
+    notes TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'Ativo' CHECK (status IN ('Ativo', 'Inativo')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_retailer_referrals_agent_id ON public.retailer_referrals (agent_id);
+CREATE INDEX IF NOT EXISTS idx_retailer_referrals_retailer_id ON public.retailer_referrals (retailer_id);
 
 CREATE TABLE IF NOT EXISTS public.stock_movements (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

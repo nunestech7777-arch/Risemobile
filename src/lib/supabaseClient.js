@@ -22,7 +22,7 @@ export const supabase = isLiveSupabaseConfigured
   : null;
 
 // Local Storage Keys
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   GRADES: 'risemobile_grades',
   RETAILERS: 'risemobile_retailers',
   DEVICES: 'risemobile_devices',
@@ -33,7 +33,8 @@ const STORAGE_KEYS = {
   AUDIT_LOGS: 'risemobile_audit_logs',
   ADJUSTMENTS: 'risemobile_adjustments',
   RETAILER_REFERRALS: 'risemobile_retailer_referrals',
-  STOCK_ENTRIES: 'risemobile_stock_entries'
+  STOCK_ENTRIES: 'risemobile_stock_entries',
+  COMMISSION_AGENTS: 'risemobile_commission_agents'
 };
 
 const memoryStorage = {};
@@ -1023,7 +1024,22 @@ export const DataService = {
   },
 
   async saveRetailer(retailer) {
-    const payload = { ...retailer };
+    if (!retailer || !retailer.store_name || !retailer.store_name.trim()) {
+      throw new Error('Informe o nome da loja.');
+    }
+
+    const payload = {
+      ...retailer,
+      store_name: retailer.store_name.trim(),
+      contact_name: retailer.contact_name !== undefined ? retailer.contact_name : '',
+      phone: retailer.phone !== undefined ? retailer.phone : '',
+      whatsapp: retailer.whatsapp !== undefined ? retailer.whatsapp : '',
+      document: retailer.document !== undefined ? retailer.document : '',
+      city: retailer.city !== undefined ? retailer.city : '',
+      state: retailer.state !== undefined ? retailer.state : '',
+      address: retailer.address !== undefined ? retailer.address : '',
+      notes: retailer.notes !== undefined ? retailer.notes : ''
+    };
     if (!payload.id || payload.id.trim() === '') {
       delete payload.id;
     }
@@ -2287,6 +2303,331 @@ export const DataService = {
     const updated = list.filter(r => r.id !== id);
     setStored(STORAGE_KEYS.RETAILER_REFERRALS, updated);
     return true;
+  },
+
+  // ==========================================
+  // GESTÃO DE ACESSOS E LOGIN DE COMISSIONADOS
+  // ==========================================
+  async getCommissionAgents() {
+    if (isLiveSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('commission_agents')
+        .select('*')
+        .order('name');
+      if (!error && data) return data;
+    }
+    return getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
+  },
+
+  async saveCommissionAgent(agent) {
+    if (!agent || !agent.name || !agent.name.trim()) {
+      throw new Error('Informe o nome do comissionado.');
+    }
+    if (!agent.email || !agent.email.trim()) {
+      throw new Error('Informe o e-mail de acesso do comissionado.');
+    }
+
+    const cleanEmail = agent.email.trim().toLowerCase();
+    const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
+
+    // Validar duplicidade de e-mail em outro cadastro
+    const existing = agents.find(a => a.email.toLowerCase() === cleanEmail && a.id !== agent.id);
+    if (existing) {
+      throw new Error(`O e-mail ${cleanEmail} já está em uso por outro comissionado.`);
+    }
+
+    const payload = {
+      ...agent,
+      id: agent.id || `agent-${Date.now()}`,
+      name: agent.name.trim(),
+      email: cleanEmail,
+      phone: agent.phone ? agent.phone.trim() : '',
+      is_active: agent.is_active !== undefined ? Boolean(agent.is_active) : true,
+      password: agent.password || agent.password_hash || '123456',
+      created_at: agent.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    if (isLiveSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('commission_agents')
+        .upsert(payload)
+        .select();
+      if (error) {
+        console.error('Erro ao salvar comissionado no Supabase:', error);
+      } else if (data && data[0]) {
+        // Atualiza localmente também
+      }
+    }
+
+    let updatedList;
+    if (agent.id) {
+      updatedList = agents.map(a => a.id === agent.id ? { ...a, ...payload } : a);
+    } else {
+      updatedList = [payload, ...agents];
+    }
+    setStored(STORAGE_KEYS.COMMISSION_AGENTS, updatedList);
+
+    // Sincronizar vínculos existentes em retailer_referrals
+    const referrals = getStored(STORAGE_KEYS.RETAILER_REFERRALS, INITIAL_RETAILER_REFERRALS);
+    let referralsUpdated = false;
+    const mappedReferrals = referrals.map(ref => {
+      if (ref.referrer_name && ref.referrer_name.trim().toLowerCase() === payload.name.toLowerCase() && ref.agent_id !== payload.id) {
+        referralsUpdated = true;
+        return { ...ref, agent_id: payload.id };
+      }
+      return ref;
+    });
+    if (referralsUpdated) {
+      setStored(STORAGE_KEYS.RETAILER_REFERRALS, mappedReferrals);
+    }
+
+    return payload;
+  },
+
+  async setCommissionAgentStatus(id, isActive) {
+    if (!id) throw new Error('ID do comissionado não informado.');
+    const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
+    const target = agents.find(a => a.id === id);
+    if (!target) throw new Error('Comissionado não encontrado.');
+
+    target.is_active = Boolean(isActive);
+    target.updated_at = new Date().toISOString();
+
+    if (isLiveSupabaseConfigured && supabase) {
+      await supabase
+        .from('commission_agents')
+        .update({ is_active: target.is_active, updated_at: target.updated_at })
+        .eq('id', id);
+    }
+
+    const updated = agents.map(a => a.id === id ? { ...a, is_active: target.is_active } : a);
+    setStored(STORAGE_KEYS.COMMISSION_AGENTS, updated);
+    return target;
+  },
+
+  async resetCommissionAgentPassword(id, newPassword) {
+    if (!id) throw new Error('ID do comissionado não informado.');
+    if (!newPassword || newPassword.length < 4) {
+      throw new Error('A nova senha deve ter pelo menos 4 caracteres.');
+    }
+    const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
+    const target = agents.find(a => a.id === id);
+    if (!target) throw new Error('Comissionado não encontrado.');
+
+    target.password = newPassword;
+    target.updated_at = new Date().toISOString();
+
+    if (isLiveSupabaseConfigured && supabase) {
+      await supabase
+        .from('commission_agents')
+        .update({ password_hash: newPassword, updated_at: target.updated_at })
+        .eq('id', id);
+    }
+
+    const updatedAgent = { ...target, password: newPassword, password_hash: newPassword };
+    const updated = agents.map(a => a.id === id ? updatedAgent : a);
+    setStored(STORAGE_KEYS.COMMISSION_AGENTS, updated);
+    return { success: true, agent: updatedAgent, message: 'Senha atualizada com sucesso.' };
+  },
+
+  async deleteCommissionAgent(id) {
+    if (!id) throw new Error('ID do comissionado não informado.');
+    if (isLiveSupabaseConfigured && supabase) {
+      await supabase.from('commission_agents').delete().eq('id', id);
+    }
+    const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
+    const updated = agents.filter(a => a.id !== id);
+    setStored(STORAGE_KEYS.COMMISSION_AGENTS, updated);
+    return true;
+  },
+
+  /**
+   * Consulta Segura e Exclusiva para o Portal do Comissionado (Somente Leitura)
+   * Blindado contra vazamento de dados de outros comissionados, custos, margens e estoque.
+   */
+  async getCommissionAgentPortalData(identifier, periodFilter = {}) {
+    const agents = getStored(STORAGE_KEYS.COMMISSION_AGENTS, []);
+    
+    // Identifier can be a string (agentId/userId/email) or an object ({ agentId, email, userId })
+    let agentId = null;
+    let email = null;
+    let userId = null;
+    
+    if (typeof identifier === 'string') {
+      agentId = identifier;
+    } else if (identifier && typeof identifier === 'object') {
+      agentId = identifier.agentId || identifier.id;
+      email = identifier.email;
+      userId = identifier.userId;
+    }
+
+    // Localizar o comissionado por ID, e-mail ou user_id
+    let agent = null;
+    if (agentId) {
+      agent = agents.find(a => a.id === agentId || a.user_id === agentId);
+    }
+    if (!agent && email) {
+      const clean = email.trim().toLowerCase();
+      agent = agents.find(a => a.email && a.email.toLowerCase() === clean);
+    }
+    if (!agent && userId) {
+      agent = agents.find(a => a.user_id === userId || a.id === userId);
+    }
+
+    if (!agent) {
+      throw new Error('Acesso não autorizado: Comissionado não identificado.');
+    }
+
+    if (!agent.is_active) {
+      throw new Error('Acesso desativado. Entre em contato com a administração da RiseMobile.');
+    }
+
+    // Carregar indicações vinculadas exclusivamente a este agente
+    const allReferrals = getStored(STORAGE_KEYS.RETAILER_REFERRALS, INITIAL_RETAILER_REFERRALS);
+    const myReferrals = allReferrals.filter(ref => 
+      ref.agent_id === agent.id || 
+      (ref.referrer_name && ref.referrer_name.trim().toLowerCase() === agent.name.trim().toLowerCase())
+    );
+
+    // Carregar lojas
+    const allRetailers = getStored(STORAGE_KEYS.RETAILERS, INITIAL_RETAILERS);
+    
+    // Carregar pedidos finalizados das lojas indicadas
+    const allOrders = getStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
+    const myRetailerIds = new Set(myReferrals.map(r => r.retailer_id));
+    const myRetailerNames = new Set(myReferrals.map(r => (r.retailer_name || '').toLowerCase()));
+
+    // Filtrar pedidos elegíveis
+    const startDate = periodFilter.startDate ? new Date(periodFilter.startDate) : null;
+    const endDate = periodFilter.endDate ? new Date(periodFilter.endDate) : null;
+    if (endDate) endDate.setHours(23, 59, 59, 999);
+
+    const validCompletedOrders = allOrders.filter(o => {
+      const orderRetailerId = o.retailer_id || o.retailerId;
+      const orderRetailerName = (o.retailer_name || o.client || '').toLowerCase();
+      
+      const isMyStore = (orderRetailerId && myRetailerIds.has(orderRetailerId)) ||
+                        (orderRetailerName && myRetailerNames.has(orderRetailerName));
+      if (!isMyStore) return false;
+
+      const statusLower = (o.status || '').toLowerCase();
+      const isCompleted = statusLower === 'finalizado' || statusLower === 'completed' || statusLower === 'parcialmente devolvida' || !o.status;
+      if (!isCompleted) return false;
+
+      if (startDate || endDate) {
+        const orderDate = new Date(o.created_at || o.date);
+        if (startDate && orderDate < startDate) return false;
+        if (endDate && orderDate > endDate) return false;
+      }
+      return true;
+    });
+
+    // Calcular agregado por lojista indicado
+    const calculatedReferrals = myReferrals.map(ref => {
+      const retailer = allRetailers.find(ret => ret.id === ref.retailer_id || (ret.store_name && ret.store_name.toLowerCase() === (ref.retailer_name || '').toLowerCase()));
+      const refStoreName = (ref.retailer_name || (retailer ? retailer.store_name : '')).toLowerCase();
+      
+      const retailerOrders = validCompletedOrders.filter(o => {
+        const oId = o.retailer_id || o.retailerId;
+        const oName = (o.retailer_name || o.client || '').toLowerCase();
+        return (oId && oId === ref.retailer_id) || (oName && oName === refStoreName);
+      });
+
+      // Quantidade total de peças válidas compradas
+      let unitsCount = 0;
+      if (retailerOrders.length > 0) {
+        unitsCount = retailerOrders.reduce((sum, order) => {
+          const itemsQty = order.items?.reduce((isum, item) => isum + (Number(item.quantity) || 0), 0) || Number(order.quantity) || 0;
+          const returnedQty = Number(order.returned_quantity) || 0;
+          return sum + Math.max(0, itemsQty - returnedQty);
+        }, 0);
+      } else {
+        unitsCount = Number(ref.total_units) || Number(ref.units_count) || 0;
+      }
+
+      const commRate = parseFloat(ref.commission_per_unit_usd || ref.commission_per_unit) || 0;
+      const accumulatedCommission = unitsCount * commRate;
+
+      return {
+        id: ref.id,
+        retailer_id: ref.retailer_id,
+        retailer_name: retailer ? retailer.store_name : (ref.retailer_name || 'Lojista'),
+        retailer_city: retailer ? retailer.city : '',
+        retailer_state: retailer ? retailer.state : '',
+        commission_per_unit_usd: commRate,
+        units_count: unitsCount,
+        accumulated_commission_usd: accumulatedCommission,
+        status: ref.status || 'Ativo',
+        notes: ref.notes || '',
+        created_at: ref.created_at
+      };
+    });
+
+    // Extrato de Pedidos (somente campos seguros)
+    const ordersHistory = [];
+    validCompletedOrders.forEach(order => {
+      const orderRetailerId = order.retailer_id || order.retailerId;
+      const orderRetailerName = (order.retailer_name || order.client || '').toLowerCase();
+      const ref = myReferrals.find(r => 
+        (orderRetailerId && r.retailer_id === orderRetailerId) || 
+        (orderRetailerName && (r.retailer_name || '').toLowerCase() === orderRetailerName)
+      );
+      const retailer = allRetailers.find(ret => 
+        (orderRetailerId && ret.id === orderRetailerId) ||
+        (orderRetailerName && ret.store_name && ret.store_name.toLowerCase() === orderRetailerName)
+      );
+      const itemsQty = order.items?.reduce((isum, item) => isum + (Number(item.quantity) || 0), 0) || Number(order.quantity) || 0;
+      const returnedQty = Number(order.returned_quantity) || 0;
+      const validUnits = Math.max(0, itemsQty - returnedQty);
+      
+      if (validUnits > 0) {
+        const commRate = ref ? (parseFloat(ref.commission_per_unit_usd || ref.commission_per_unit) || 0) : 0;
+        ordersHistory.push({
+          order_id: order.id,
+          order_number: order.order_number || `PED-${(order.id || '').slice(0, 6)}`,
+          retailer_name: retailer ? retailer.store_name : (order.retailer_name || order.client || 'Lojista'),
+          store_name: retailer ? retailer.store_name : (order.retailer_name || order.client || 'Lojista'),
+          date: order.created_at || order.date,
+          units_count: validUnits,
+          commission_rate_usd: commRate,
+          commission_usd: validUnits * commRate,
+          commission_earned: validUnits * commRate,
+          status: order.status
+        });
+      }
+    });
+
+    // Ordenar histórico do mais recente para o mais antigo
+    ordersHistory.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    const totalUnits = calculatedReferrals.reduce((sum, r) => sum + r.units_count, 0);
+    const totalCommissionUSD = calculatedReferrals.reduce((sum, r) => sum + r.accumulated_commission_usd, 0);
+    const activeRetailersCount = calculatedReferrals.filter(r => {
+      const s = (r.status || '').toLowerCase();
+      return s.includes('ativ') || s.includes('activ');
+    }).length;
+
+    return {
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        email: agent.email,
+        phone: agent.phone || '',
+        is_active: agent.is_active
+      },
+      referrals: calculatedReferrals,
+      orders_history: ordersHistory,
+      salesHistory: ordersHistory,
+      total_units: totalUnits,
+      total_commission_usd: totalCommissionUSD,
+      active_retailers_count: activeRetailersCount,
+      summary: {
+        totalUnits,
+        totalCommissionUSD,
+        activeStores: activeRetailersCount
+      }
+    };
   },
 
   // Configurações Globais

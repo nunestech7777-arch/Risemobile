@@ -7,16 +7,27 @@ import {
   Search, 
   DollarSign, 
   Users, 
-  Building2,
-  Calendar,
-  Receipt,
-  FileText,
-  ExternalLink,
-  ChevronRight,
-  ChevronDown,
-  Check,
-  Filter,
-  X
+  Building2, 
+  Calendar, 
+  Receipt, 
+  FileText, 
+  ExternalLink, 
+  ChevronRight, 
+  ChevronDown, 
+  Check, 
+  Filter, 
+  X,
+  Key,
+  ShieldCheck,
+  ShieldAlert,
+  UserPlus,
+  Copy,
+  Lock,
+  Eye,
+  EyeOff,
+  Send,
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -31,10 +42,19 @@ export const CommissionsModule = ({
   orders = [],
   retailers = [],
   retailerReferrals = [],
+  commissionAgents = [],
   onSaveReferral,
-  onDeleteReferral
+  onDeleteReferral,
+  onSaveCommissionAgent,
+  onSetCommissionAgentStatus,
+  onResetCommissionAgentPassword,
+  onDeleteCommissionAgent
 }) => {
+  // Sub-Tab Switcher: 'referrals' | 'agent_logins'
+  const [activeSubTab, setActiveSubTab] = useState('referrals');
+
   const [searchQuery, setSearchQuery] = useState('');
+  const [agentsSearchQuery, setAgentsSearchQuery] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState('all'); // all, today, yesterday, this_week, this_month, last_month, last_7_days, last_20_days, last_30_days, this_year, custom
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -45,7 +65,28 @@ export const CommissionsModule = ({
   const [editingReferral, setEditingReferral] = useState(null);
   const [detailReferral, setDetailReferral] = useState(null);
 
-  // Form State
+  // Estados dos Modais de Gestão de Acessos
+  const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState(null);
+  const [agentFormData, setAgentFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    password: '',
+    is_active: true
+  });
+  const [agentFormError, setAgentFormError] = useState('');
+
+  const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
+  const [selectedAgentForReset, setSelectedAgentForReset] = useState(null);
+  const [newPasswordValue, setNewPasswordValue] = useState('');
+  const [resetPasswordError, setResetPasswordError] = useState('');
+
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [selectedAgentForShare, setSelectedAgentForShare] = useState(null);
+  const [copiedNotification, setCopiedNotification] = useState(false);
+
+  // Form State da Indicação
   const [formData, setFormData] = useState({
     referrer_name: '',
     retailer_id: '',
@@ -344,330 +385,756 @@ export const CommissionsModule = ({
     }
   };
 
+  // Helper para buscar o login do comissionado vinculado ao nome do indicador
+  const getAgentForReferrer = (name) => {
+    if (!name) return null;
+    return commissionAgents.find(a => a.name?.toLowerCase() === name.trim().toLowerCase());
+  };
+
+  const generateRandomPassword = () => {
+    const chars = '23456789abcdefghjkmnpqrstuvwxyz';
+    let pass = 'Rise@';
+    for (let i = 0; i < 4; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return pass;
+  };
+
+  // Handlers para Gestão de Acessos
+  const handleOpenCreateAgentModal = () => {
+    setEditingAgent(null);
+    setAgentFormData({
+      name: '',
+      email: '',
+      phone: '',
+      password: generateRandomPassword(),
+      is_active: true
+    });
+    setAgentFormError('');
+    setIsAgentModalOpen(true);
+  };
+
+  const handleOpenCreateAgentFromReferral = (referrerName, e) => {
+    e?.stopPropagation();
+    setEditingAgent(null);
+    const cleanName = (referrerName || '').trim();
+    const suggestedEmail = cleanName
+      ? `${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@parceiro.com`
+      : '';
+    setAgentFormData({
+      name: cleanName,
+      email: suggestedEmail,
+      phone: '',
+      password: generateRandomPassword(),
+      is_active: true
+    });
+    setAgentFormError('');
+    setIsAgentModalOpen(true);
+  };
+
+  const handleOpenEditAgentModal = (agent, e) => {
+    e?.stopPropagation();
+    setEditingAgent(agent);
+    setAgentFormData({
+      name: agent.name || '',
+      email: agent.email || '',
+      phone: agent.phone || '',
+      password: agent.password || '',
+      is_active: agent.is_active !== undefined ? agent.is_active : true
+    });
+    setAgentFormError('');
+    setIsAgentModalOpen(true);
+  };
+
+  const handleSaveAgentSubmit = async (e) => {
+    e.preventDefault();
+    if (!agentFormData.name.trim()) {
+      setAgentFormError('Informe o nome do comissionado.');
+      return;
+    }
+    if (!agentFormData.email.trim()) {
+      setAgentFormError('Informe o e-mail de acesso do comissionado.');
+      return;
+    }
+    if (!editingAgent && !agentFormData.password) {
+      setAgentFormError('Defina uma senha inicial de acesso.');
+      return;
+    }
+
+    try {
+      if (onSaveCommissionAgent) {
+        const saved = await onSaveCommissionAgent({
+          ...(editingAgent ? { id: editingAgent.id } : {}),
+          ...agentFormData
+        });
+        setIsAgentModalOpen(false);
+        // Abre o modal de compartilhamento com a credencial criada
+        if (!editingAgent && saved) {
+          setSelectedAgentForShare(saved);
+          setIsShareModalOpen(true);
+          setCopiedNotification(false);
+        }
+      }
+    } catch (err) {
+      setAgentFormError(err.message || 'Erro ao salvar acesso do comissionado.');
+    }
+  };
+
+  const handleToggleAgentStatus = async (agent, e) => {
+    e?.stopPropagation();
+    if (onSetCommissionAgentStatus) {
+      try {
+        await onSetCommissionAgentStatus(agent.id, !agent.is_active);
+      } catch (err) {
+        alert(err.message || 'Erro ao alterar status do comissionado.');
+      }
+    }
+  };
+
+  const handleOpenResetPasswordModal = (agent, e) => {
+    e?.stopPropagation();
+    setSelectedAgentForReset(agent);
+    setNewPasswordValue(generateRandomPassword());
+    setResetPasswordError('');
+    setIsResetPasswordModalOpen(true);
+  };
+
+  const handleResetPasswordSubmit = async (e) => {
+    e.preventDefault();
+    if (!newPasswordValue || newPasswordValue.length < 4) {
+      setResetPasswordError('A nova senha deve ter no mínimo 4 caracteres.');
+      return;
+    }
+    if (onResetCommissionAgentPassword && selectedAgentForReset) {
+      try {
+        await onResetCommissionAgentPassword(selectedAgentForReset.id, newPasswordValue);
+        setIsResetPasswordModalOpen(false);
+        // Abrir compartilhamento
+        setSelectedAgentForShare({
+          ...selectedAgentForReset,
+          password: newPasswordValue
+        });
+        setIsShareModalOpen(true);
+        setCopiedNotification(false);
+      } catch (err) {
+        setResetPasswordError(err.message || 'Erro ao redefinir senha.');
+      }
+    }
+  };
+
+  const handleDeleteAgent = async (agent, e) => {
+    e?.stopPropagation();
+    if (window.confirm(`Deseja realmente excluir o acesso de "${agent.name}"? O parceiro não conseguirá mais logar no portal.`)) {
+      if (onDeleteCommissionAgent) {
+        try {
+          await onDeleteCommissionAgent(agent.id);
+        } catch (err) {
+          alert(err.message || 'Erro ao excluir comissionado.');
+        }
+      }
+    }
+  };
+
+  const handleShareCredentials = (agent, e) => {
+    e?.stopPropagation();
+    setSelectedAgentForShare(agent);
+    setIsShareModalOpen(true);
+    setCopiedNotification(false);
+  };
+
+  const copyShareTextToClipboard = () => {
+    if (!selectedAgentForShare) return;
+    const portalUrl = typeof window !== 'undefined' ? `${window.location.origin}` : 'https://app.risemobile.com';
+    const text = `🌟 *Acesso ao Portal do Comissionado — RiseMobile*\n\nOlá *${selectedAgentForShare.name}*, seu acesso exclusivo para acompanhar suas comissões já está ativo!\n\n🔗 *Link de Acesso:* ${portalUrl}\n👤 *E-mail:* ${selectedAgentForShare.email}\n🔑 *Senha:* ${selectedAgentForShare.password || '123456'}\n\nNo portal você acompanha em tempo real suas peças vendidas, valores e extrato das lojas indicadas. Qualquer dúvida estamos à disposição!`;
+
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedNotification(true);
+      setTimeout(() => setCopiedNotification(false), 3000);
+    });
+  };
+
+  // Filtragem dos Comissionados na Sub-aba
+  const filteredAgents = useMemo(() => {
+    const q = agentsSearchQuery.toLowerCase().trim();
+    if (!q) return commissionAgents;
+    return commissionAgents.filter(a => 
+      a.name?.toLowerCase().includes(q) ||
+      a.email?.toLowerCase().includes(q) ||
+      a.phone?.toLowerCase().includes(q)
+    );
+  }, [commissionAgents, agentsSearchQuery]);
+
   return (
     <div className="space-y-6 animate-fade-in pb-12">
-      {/* Top Header & Botão Nova Indicação */}
+      {/* Top Header & Sub-Tabs Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
             <Award className="w-6 h-6 text-slate-800 dark:text-slate-200" />
-            Comissões por Indicação de Lojista
+            Comissões & Parceiros Indicadores
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-300 mt-0.5">
-            Valor fixo devido ao indicador por cada aparelho comprado pelo lojista indicado
+            Gestão de comissões por indicação de lojistas e controle de acessos ao portal exclusivo
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <Button 
-            variant="primary" 
-            size="md" 
-            onClick={handleOpenCreateModal} 
-            icon={Plus}
-          >
-            Nova Indicação
-          </Button>
+          {/* Sub-tab Pill Switcher */}
+          <div className="flex items-center p-1 rounded-2xl bg-slate-100 dark:bg-white/[0.06] border border-slate-200/80 dark:border-white/10 text-xs">
+            <button
+              onClick={() => setActiveSubTab('referrals')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-bold transition-all ${
+                activeSubTab === 'referrals'
+                  ? 'bg-white dark:bg-[#111827] text-slate-950 dark:text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Award className="w-3.5 h-3.5" />
+              <span>Indicações & Lojistas</span>
+            </button>
+            <button
+              onClick={() => setActiveSubTab('agent_logins')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-bold transition-all ${
+                activeSubTab === 'agent_logins'
+                  ? 'bg-white dark:bg-[#111827] text-slate-950 dark:text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Key className="w-3.5 h-3.5" />
+              <span>Logins dos Comissionados</span>
+              {commissionAgents.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-extrabold">
+                  {commissionAgents.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {activeSubTab === 'referrals' ? (
+            <Button 
+              variant="primary" 
+              size="md" 
+              onClick={handleOpenCreateModal} 
+              icon={Plus}
+            >
+              Nova Indicação
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="md"
+              onClick={handleOpenCreateAgentModal}
+              icon={UserPlus}
+            >
+              Novo Login
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* 3 Indicadores Minimalistas do Topo */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Total Peças Comissionadas */}
-        <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-              Total de Peças Comissionadas
-            </span>
-            <div className="p-2 rounded-lg bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-cyan-300">
-              <IPhoneIcon className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
-            {totalCommissionedPieces} <span className="text-sm font-semibold text-slate-500 dark:text-slate-300">un.</span>
-          </div>
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-300 mt-1">
-            <span>Período:</span>
-            <span className="font-semibold text-slate-700 dark:text-slate-200">{activePeriodLabel}</span>
-          </div>
-        </div>
-
-        {/* Total de Comissões */}
-        <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-              Total de Comissões
-            </span>
-            <div className="p-2 rounded-lg bg-[#111418] text-white dark:bg-emerald-500/20 dark:text-emerald-300 dark:border dark:border-emerald-500/30">
-              <DollarSign className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
-            {formatUSD(totalCommissionsAmount)}
-          </div>
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-300 mt-1">
-            <span>Período:</span>
-            <span className="font-semibold text-slate-700 dark:text-slate-200">{activePeriodLabel}</span>
-          </div>
-        </div>
-
-        {/* Indicações Ativas */}
-        <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-              Indicações Ativas
-            </span>
-            <div className="p-2 rounded-lg bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-purple-300">
-              <Users className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
-            {activeReferralsCount} <span className="text-sm font-semibold text-slate-500 dark:text-slate-300">lojistas</span>
-          </div>
-          <span className="text-[11px] text-slate-500 dark:text-slate-300 mt-1">Relações indicador $\rightarrow$ lojista</span>
-        </div>
-      </div>
-
-      {/* Tabela Principal de Indicações de Lojistas */}
-      <Card className="p-6">
-        {/* Cabeçalho da Tabela com Filtro de Data e Busca Integrados */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white">
-              Indicações e Comissões Acumuladas
-            </h3>
-            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-              <p className="text-xs text-slate-400">
-                Fórmula: Peças Compradas pelo Lojista × Valor Fixo por Peça
-              </p>
-              <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">•</span>
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 inline-flex items-center gap-1 bg-slate-100 dark:bg-white/[0.06] px-2 py-0.5 rounded-md">
-                <Calendar className="w-3 h-3 text-slate-400" />
-                {activePeriodLabel}
-              </span>
-            </div>
-          </div>
-
-          {/* Controles de Ação: Filtro de Período + Campo de Busca */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            {/* Popover / Dropdown do Filtro de Período */}
-            <div className="relative" ref={periodDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setIsPeriodDropdownOpen(!isPeriodDropdownOpen)}
-                className={`flex items-center justify-between gap-2.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all w-full sm:w-auto ${
-                  selectedPeriod !== 'all'
-                    ? 'bg-[#111418] text-white border-[#111418] dark:bg-white/20 dark:border-white/30 dark:text-white shadow-xs'
-                    : 'bg-white dark:bg-white/[0.05] text-slate-700 dark:text-slate-200 border-slate-200/90 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 shadow-xs'
-                }`}
-                title="Filtrar compras por período"
-              >
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-3.5 h-3.5 opacity-80" />
-                  <span className="truncate max-w-[160px]">{activePeriodLabel}</span>
+      {/* ABA 1: INDICAÇÕES & LOJISTAS */}
+      {activeSubTab === 'referrals' && (
+        <div className="space-y-6">
+          {/* 3 Indicadores Minimalistas do Topo */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* Total Peças Comissionadas */}
+            <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                  Total de Peças Comissionadas
+                </span>
+                <div className="p-2 rounded-lg bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-cyan-300">
+                  <IPhoneIcon className="w-4 h-4" />
                 </div>
-                <ChevronDown className={`w-3.5 h-3.5 opacity-70 transition-transform ${isPeriodDropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
+              </div>
+              <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+                {totalCommissionedPieces} <span className="text-sm font-semibold text-slate-500 dark:text-slate-300">un.</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-300 mt-1">
+                <span>Período:</span>
+                <span className="font-semibold text-slate-700 dark:text-slate-200">{activePeriodLabel}</span>
+              </div>
+            </div>
 
-              {/* Menu Flutuante de Períodos */}
-              {isPeriodDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white dark:bg-[#0D121D]/95 dark:backdrop-blur-2xl border border-slate-200 dark:border-white/15 rounded-2xl shadow-modal dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] z-50 p-3 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-white/10">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                      Filtrar Comissões por Período
-                    </span>
-                    {selectedPeriod !== 'all' && (
-                      <button
-                        onClick={() => {
-                          setSelectedPeriod('all');
-                          setCustomStartDate('');
-                          setCustomEndDate('');
-                        }}
-                        className="text-[11px] font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
-                      >
-                        Limpar Filtro
-                      </button>
-                    )}
-                  </div>
+            {/* Total de Comissões */}
+            <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                  Total de Comissões
+                </span>
+                <div className="p-2 rounded-lg bg-[#111418] text-white dark:bg-emerald-500/20 dark:text-emerald-300 dark:border dark:border-emerald-500/30">
+                  <DollarSign className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+                {formatUSD(totalCommissionsAmount)}
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-300 mt-1">
+                <span>Período:</span>
+                <span className="font-semibold text-slate-700 dark:text-slate-200">{activePeriodLabel}</span>
+              </div>
+            </div>
 
-                  <div className="grid grid-cols-2 gap-1 max-h-56 overflow-y-auto custom-scrollbar pr-1">
-                    {PERIOD_OPTIONS.filter(o => o.id !== 'custom').map(opt => {
-                      const isSelected = selectedPeriod === opt.id;
-                      return (
+            {/* Indicações Ativas */}
+            <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                  Indicações Ativas
+                </span>
+                <div className="p-2 rounded-lg bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-purple-300">
+                  <Users className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+                {activeReferralsCount} <span className="text-sm font-semibold text-slate-500 dark:text-slate-300">lojistas</span>
+              </div>
+              <span className="text-[11px] text-slate-500 dark:text-slate-300 mt-1">Relações indicador $\rightarrow$ lojista</span>
+            </div>
+          </div>
+
+          {/* Tabela Principal de Indicações de Lojistas */}
+          <Card className="p-6">
+            {/* Cabeçalho da Tabela com Filtro de Data e Busca Integrados */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Indicações e Comissões Acumuladas
+                </h3>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <p className="text-xs text-slate-400">
+                    Fórmula: Peças Compradas pelo Lojista × Valor Fixo por Peça
+                  </p>
+                  <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">•</span>
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 inline-flex items-center gap-1 bg-slate-100 dark:bg-white/[0.06] px-2 py-0.5 rounded-md">
+                    <Calendar className="w-3 h-3 text-slate-400" />
+                    {activePeriodLabel}
+                  </span>
+                </div>
+              </div>
+
+              {/* Controles de Ação: Filtro de Período + Campo de Busca */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                {/* Popover / Dropdown do Filtro de Período */}
+                <div className="relative" ref={periodDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsPeriodDropdownOpen(!isPeriodDropdownOpen)}
+                    className={`flex items-center justify-between gap-2.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all w-full sm:w-auto ${
+                      selectedPeriod !== 'all'
+                        ? 'bg-[#111418] text-white border-[#111418] dark:bg-white/20 dark:border-white/30 dark:text-white shadow-xs'
+                        : 'bg-white dark:bg-white/[0.05] text-slate-700 dark:text-slate-200 border-slate-200/90 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 shadow-xs'
+                    }`}
+                    title="Filtrar compras por período"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-3.5 h-3.5 opacity-80" />
+                      <span className="truncate max-w-[160px]">{activePeriodLabel}</span>
+                    </div>
+                    <ChevronDown className={`w-3.5 h-3.5 opacity-70 transition-transform ${isPeriodDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {/* Menu Flutuante de Períodos */}
+                  {isPeriodDropdownOpen && (
+                    <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white dark:bg-[#0D121D]/95 dark:backdrop-blur-2xl border border-slate-200 dark:border-white/15 rounded-2xl shadow-modal dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] z-50 p-3 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-white/10">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                          Filtrar Comissões por Período
+                        </span>
+                        {selectedPeriod !== 'all' && (
+                          <button
+                            onClick={() => {
+                              setSelectedPeriod('all');
+                              setCustomStartDate('');
+                              setCustomEndDate('');
+                            }}
+                            className="text-[11px] font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
+                          >
+                            Limpar Filtro
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1 max-h-56 overflow-y-auto custom-scrollbar pr-1">
+                        {PERIOD_OPTIONS.filter(o => o.id !== 'custom').map(opt => {
+                          const isSelected = selectedPeriod === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              onClick={() => {
+                                setSelectedPeriod(opt.id);
+                                setIsPeriodDropdownOpen(false);
+                              }}
+                              className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all text-left ${
+                                isSelected
+                                  ? 'bg-[#111418] text-white dark:bg-white/20 dark:text-white font-bold'
+                                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.08]'
+                              }`}
+                            >
+                              <span className="truncate">{opt.label}</span>
+                              {isSelected && <Check className="w-3.5 h-3.5 ml-1 shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Opção de Período Personalizado */}
+                      <div className="pt-2.5 mt-2 border-t border-slate-100 dark:border-white/10">
                         <button
-                          key={opt.id}
-                          onClick={() => {
-                            setSelectedPeriod(opt.id);
-                            setIsPeriodDropdownOpen(false);
-                          }}
-                          className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all text-left ${
-                            isSelected
-                              ? 'bg-[#111418] text-white dark:bg-white/20 dark:text-white font-bold'
+                          onClick={() => setSelectedPeriod('custom')}
+                          className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            selectedPeriod === 'custom'
+                              ? 'bg-[#111418] text-white dark:bg-white/20 dark:text-white'
                               : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.08]'
                           }`}
                         >
-                          <span className="truncate">{opt.label}</span>
-                          {isSelected && <Check className="w-3.5 h-3.5 ml-1 shrink-0" />}
+                          <span>Período personalizado</span>
+                          {selectedPeriod === 'custom' && <Check className="w-3.5 h-3.5 ml-1 shrink-0" />}
                         </button>
-                      );
-                    })}
-                  </div>
 
-                  {/* Opção de Período Personalizado */}
-                  <div className="pt-2.5 mt-2 border-t border-slate-100 dark:border-white/10">
-                    <button
-                      onClick={() => setSelectedPeriod('custom')}
-                      className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        selectedPeriod === 'custom'
-                          ? 'bg-[#111418] text-white dark:bg-white/20 dark:text-white'
-                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.08]'
-                      }`}
+                        {selectedPeriod === 'custom' && (
+                          <div className="mt-2.5 space-y-2 p-2 rounded-xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200/60 dark:border-white/10 animate-in fade-in">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 dark:text-slate-300 block mb-1">
+                                  Data inicial
+                                </label>
+                                <input
+                                  type="date"
+                                  value={customStartDate}
+                                  onChange={(e) => setCustomStartDate(e.target.value)}
+                                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-900 dark:focus:ring-blue-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 dark:text-slate-300 block mb-1">
+                                  Data final
+                                </label>
+                                <input
+                                  type="date"
+                                  value={customEndDate}
+                                  onChange={(e) => setCustomEndDate(e.target.value)}
+                                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-900 dark:focus:ring-blue-500"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex justify-end pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setIsPeriodDropdownOpen(false)}
+                                className="px-3 py-1 bg-[#111418] text-white dark:bg-white dark:text-slate-900 text-[11px] font-bold rounded-lg hover:opacity-90 transition-opacity"
+                              >
+                                Aplicar Período
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Campo de Busca por Indicador ou Lojista */}
+                <div className="w-full sm:w-64">
+                  <Input
+                    icon={Search}
+                    placeholder="Buscar indicador ou lojista..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {filteredList.length === 0 ? (
+              <div className="py-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                Nenhuma indicação encontrada para a busca "{searchQuery}" no período selecionado.
+              </div>
+            ) : (
+              <Table headers={['Pessoa que Indicou', 'Lojista Indicado', 'Comissão / Peça', 'Peças Compradas', 'Comissão Acumulada', 'Acesso ao Portal', 'Status', 'Ações']}>
+                {filteredList.map((ref) => {
+                  const agent = getAgentForReferrer(ref.referrer_name);
+
+                  return (
+                    <TableRow 
+                      key={ref.id} 
+                      className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                      onClick={() => setDetailReferral(ref)}
                     >
-                      <span>Período personalizado</span>
-                      {selectedPeriod === 'custom' && <Check className="w-3.5 h-3.5 ml-1 shrink-0" />}
-                    </button>
-
-                    {selectedPeriod === 'custom' && (
-                      <div className="mt-2.5 space-y-2 p-2 rounded-xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200/60 dark:border-white/10 animate-in fade-in">
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-[10px] font-bold text-slate-500 dark:text-slate-300 block mb-1">
-                              Data inicial
-                            </label>
-                            <input
-                              type="date"
-                              value={customStartDate}
-                              onChange={(e) => setCustomStartDate(e.target.value)}
-                              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-900 dark:focus:ring-blue-500"
-                            />
+                      <TableCell className="font-extrabold text-slate-900 dark:text-white">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-[#111418] text-white flex items-center justify-center text-xs font-black shrink-0">
+                            {ref.referrer_name.charAt(0)}
                           </div>
                           <div>
-                            <label className="text-[10px] font-bold text-slate-500 dark:text-slate-300 block mb-1">
-                              Data final
-                            </label>
-                            <input
-                              type="date"
-                              value={customEndDate}
-                              onChange={(e) => setCustomEndDate(e.target.value)}
-                              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-900 dark:focus:ring-blue-500"
-                            />
+                            <div>{ref.referrer_name}</div>
+                            {ref.notes && <div className="text-[11px] text-slate-400 font-normal">{ref.notes}</div>}
                           </div>
                         </div>
+                      </TableCell>
 
-                        <div className="flex justify-end pt-1">
-                          <button
-                            type="button"
-                            onClick={() => setIsPeriodDropdownOpen(false)}
-                            className="px-3 py-1 bg-[#111418] text-white dark:bg-white dark:text-slate-900 text-[11px] font-bold rounded-lg hover:opacity-90 transition-opacity"
+                      <TableCell className="font-semibold text-slate-800 dark:text-slate-200">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-bold">
+                          <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                          {ref.retailer_name}
+                        </span>
+                      </TableCell>
+
+                      <TableCell className="font-bold text-slate-800 dark:text-slate-200">
+                        {formatUSD(ref.currentRate)} <span className="text-xs font-normal text-slate-400">/ peça</span>
+                      </TableCell>
+
+                      <TableCell className="font-bold text-slate-600 dark:text-slate-300">
+                        {ref.unitsCount} un.
+                      </TableCell>
+
+                      <TableCell className="font-black text-slate-900 dark:text-white text-base">
+                        {formatUSD(ref.totalCommission)}
+                      </TableCell>
+
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {agent ? (
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant={agent.is_active ? 'success' : 'neutral'} size="sm">
+                              {agent.is_active ? 'Acesso Ativo' : 'Acesso Inativo'}
+                            </Badge>
+                            <button
+                              onClick={(e) => handleShareCredentials(agent, e)}
+                              title="Copiar dados de acesso para WhatsApp"
+                              className="p-1 rounded-lg text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-slate-100 dark:hover:bg-white/[0.08]"
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={(e) => handleOpenCreateAgentFromReferral(ref.referrer_name, e)}
+                            icon={UserPlus}
+                            className="text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 text-[11px]"
                           >
-                            Aplicar Período
+                            Criar Acesso
+                          </Button>
+                        )}
+                      </TableCell>
+
+                      <TableCell>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${
+                          ref.status === 'Ativo'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
+                            : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+                        }`}>
+                          {ref.status}
+                        </span>
+                      </TableCell>
+
+                      <TableCell>
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDetailReferral(ref)}
+                            icon={FileText}
+                            title="Ver compras e extrato do período"
+                          >
+                            Extrato
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => handleOpenEditModal(ref, e)}
+                            icon={Edit3}
+                            title="Editar indicação"
+                          >
+                            Editar
+                          </Button>
+                          <button
+                            onClick={(e) => handleDelete(ref.id, ref.referrer_name, e)}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
+                            title="Excluir indicação"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Campo de Busca por Indicador ou Lojista */}
-            <div className="w-full sm:w-64">
-              <Input
-                icon={Search}
-                placeholder="Buscar indicador ou lojista..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-          </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </Table>
+            )}
+          </Card>
         </div>
+      )}
 
-        {filteredList.length === 0 ? (
-          <div className="py-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
-            Nenhuma indicação encontrada para a busca "{searchQuery}" no período selecionado.
+      {/* ABA 2: GESTÃO DE ACESSOS DOS COMISSIONADOS */}
+      {activeSubTab === 'agent_logins' && (
+        <div className="space-y-6">
+          {/* 3 Métricas dos Acessos */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                  Total de Comissionados
+                </span>
+                <div className="p-2 rounded-lg bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-cyan-300">
+                  <Users className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+                {commissionAgents.length} <span className="text-sm font-semibold text-slate-500">usuários</span>
+              </div>
+              <span className="text-[11px] text-slate-400 mt-1">Parceiros com login próprio no portal</span>
+            </div>
+
+            <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                  Acessos Ativos
+                </span>
+                <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-black text-emerald-600 dark:text-emerald-400 mt-3">
+                {commissionAgents.filter(a => a.is_active).length}
+              </div>
+              <span className="text-[11px] text-slate-400 mt-1">Acesso liberado ao painel em tempo real</span>
+            </div>
+
+            <div className="p-5 rounded-none bg-white dark:bg-[#0B1220]/90 dark:backdrop-blur-xl border border-slate-200/80 dark:border-white/12 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                  Acessos Inativos
+                </span>
+                <div className="p-2 rounded-lg bg-slate-100 dark:bg-white/[0.08] text-slate-400">
+                  <ShieldAlert className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-black text-slate-500 dark:text-slate-400 mt-3">
+                {commissionAgents.filter(a => !a.is_active).length}
+              </div>
+              <span className="text-[11px] text-slate-400 mt-1">Acesso bloqueado temporariamente</span>
+            </div>
           </div>
-        ) : (
-          <Table headers={['Pessoa que Indicou', 'Lojista Indicado', 'Comissão / Peça', 'Peças Compradas', 'Comissão Acumulada', 'Status', 'Ações']}>
-            {filteredList.map((ref) => (
-              <TableRow 
-                key={ref.id}
-                className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                onClick={() => setDetailReferral(ref)}
-              >
-                <TableCell className="font-extrabold text-slate-900 dark:text-white">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-full bg-[#111418] text-white flex items-center justify-center text-xs font-black shrink-0">
-                      {ref.referrer_name.charAt(0)}
-                    </div>
-                    <div>
-                      <div>{ref.referrer_name}</div>
-                      {ref.notes && <div className="text-[11px] text-slate-400 font-normal">{ref.notes}</div>}
-                    </div>
-                  </div>
-                </TableCell>
 
-                <TableCell className="font-semibold text-slate-800 dark:text-slate-200">
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-bold">
-                    <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                    {ref.retailer_name}
-                  </span>
-                </TableCell>
+          {/* Tabela de Gestão de Comissionados */}
+          <Card className="p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Controle de Logins dos Comissionados
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Crie acessos, ative/desative contas e envie credenciais prontas para o WhatsApp
+                </p>
+              </div>
 
-                <TableCell className="font-bold text-slate-800 dark:text-slate-200">
-                  {formatUSD(ref.currentRate)} <span className="text-xs font-normal text-slate-400">/ peça</span>
-                </TableCell>
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Buscar por nome ou e-mail..."
+                    value={agentsSearchQuery}
+                    onChange={(e) => setAgentsSearchQuery(e.target.value)}
+                    className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 border border-slate-200 dark:border-white/10 text-xs rounded-xl pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-purple-500 w-64"
+                  />
+                </div>
+              </div>
+            </div>
 
-                <TableCell className="font-bold text-slate-600 dark:text-slate-300">
-                  {ref.unitsCount} un.
-                </TableCell>
+            {filteredAgents.length === 0 ? (
+              <div className="py-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                Nenhum comissionado cadastrado. Clique em "Novo Login" acima para liberar acesso a um parceiro.
+              </div>
+            ) : (
+              <Table headers={['Comissionado / Indicador', 'E-mail de Login', 'Lojas Vinculadas', 'Status do Acesso', 'Ações']}>
+                {filteredAgents.map((agent) => {
+                  const linkedStores = retailerReferrals.filter(r => 
+                    r.agent_id === agent.id || 
+                    (r.referrer_name && r.referrer_name.trim().toLowerCase() === agent.name.trim().toLowerCase())
+                  );
 
-                <TableCell className="font-black text-slate-900 dark:text-white text-base">
-                  {formatUSD(ref.totalCommission)}
-                </TableCell>
-
-                <TableCell>
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${
-                    ref.status === 'Ativo'
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
-                      : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
-                  }`}>
-                    {ref.status}
-                  </span>
-                </TableCell>
-
-                <TableCell>
-                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDetailReferral(ref)}
-                      icon={FileText}
-                      title="Ver compras e extrato do período"
-                    >
-                      Extrato
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={(e) => handleOpenEditModal(ref, e)}
-                      icon={Edit3}
-                      title="Editar indicação"
-                    >
-                      Editar
-                    </Button>
-                    <button
-                      onClick={(e) => handleDelete(ref.id, ref.referrer_name, e)}
-                      className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
-                      title="Excluir indicação"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </Table>
-        )}
-      </Card>
+                  return (
+                    <TableRow key={agent.id}>
+                      <TableCell className="font-bold text-slate-900 dark:text-white">
+                        <div>
+                          <span>{agent.name}</span>
+                          {agent.phone && (
+                            <p className="text-[11px] text-slate-400 font-normal">{agent.phone}</p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-slate-700 dark:text-slate-300">
+                        {agent.email}
+                      </TableCell>
+                      <TableCell className="text-xs font-semibold text-purple-600 dark:text-purple-400">
+                        {linkedStores.length} {linkedStores.length === 1 ? 'loja' : 'lojas'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={agent.is_active ? 'success' : 'neutral'} size="sm">
+                            {agent.is_active ? 'Ativo' : 'Inativo'}
+                          </Badge>
+                          <button
+                            onClick={(e) => handleToggleAgentStatus(agent, e)}
+                            className={`text-[11px] font-bold underline transition-colors ${
+                              agent.is_active 
+                                ? 'text-amber-600 hover:text-amber-800 dark:text-amber-400' 
+                                : 'text-emerald-600 hover:text-emerald-800 dark:text-emerald-400'
+                            }`}
+                          >
+                            {agent.is_active ? 'Desativar' : 'Ativar'}
+                          </button>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={(e) => handleShareCredentials(agent, e)}
+                            icon={Send}
+                            title="Enviar credenciais por WhatsApp"
+                            className="text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30"
+                          >
+                            Credenciais
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={(e) => handleOpenResetPasswordModal(agent, e)}
+                            icon={Key}
+                            title="Redefinir senha"
+                          >
+                            Senha
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={(e) => handleOpenEditAgentModal(agent, e)}
+                            icon={Edit3}
+                            title="Editar dados"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={(e) => handleDeleteAgent(agent, e)}
+                            icon={Trash2}
+                            className="text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                            title="Excluir acesso"
+                          />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </Table>
+            )}
+          </Card>
+        </div>
+      )}
 
       {/* Drawer de Detalhes da Indicação & Extrato de Compras Filtrado por Período */}
       {activeDetailData && (
@@ -762,7 +1229,7 @@ export const CommissionsModule = ({
         </Drawer>
       )}
 
-      {/* Modal de Cadastro / Edição de Indicação de Lojista */}
+      {/* Modal 1: Cadastro / Edição de Indicação de Lojista */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -831,6 +1298,207 @@ export const CommissionsModule = ({
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal 2: Cadastro / Edição de Acesso de Comissionado */}
+      <Modal
+        isOpen={isAgentModalOpen}
+        onClose={() => setIsAgentModalOpen(false)}
+        title={editingAgent ? 'Editar Acesso do Comissionado' : 'Criar Login para Comissionado'}
+        subtitle="Defina o e-mail de acesso e senha para o portal exclusivo do parceiro."
+        size="md"
+      >
+        <form onSubmit={handleSaveAgentSubmit} className="space-y-4">
+          <Input
+            label="Nome do Comissionado / Indicador *"
+            placeholder="Ex: Carlos Mendes"
+            value={agentFormData.name}
+            onChange={(e) => {
+              setAgentFormData({ ...agentFormData, name: e.target.value });
+              if (agentFormError) setAgentFormError('');
+            }}
+            required
+          />
+
+          <Input
+            label="E-mail de Acesso (Login) *"
+            type="email"
+            placeholder="Ex: carlos@parceiro.com"
+            value={agentFormData.email}
+            onChange={(e) => {
+              setAgentFormData({ ...agentFormData, email: e.target.value });
+              if (agentFormError) setAgentFormError('');
+            }}
+            required
+          />
+
+          <Input
+            label="WhatsApp / Telefone"
+            placeholder="Ex: 5511999998888"
+            value={agentFormData.phone}
+            onChange={(e) => setAgentFormData({ ...agentFormData, phone: e.target.value })}
+          />
+
+          {!editingAgent && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Senha Inicial de Acesso *
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setAgentFormData({ ...agentFormData, password: generateRandomPassword() })}
+                  className="text-[11px] font-bold text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" /> Gerar Nova Senha
+                </button>
+              </div>
+              <Input
+                type="text"
+                placeholder="Ex: Rise@8374"
+                value={agentFormData.password}
+                onChange={(e) => setAgentFormData({ ...agentFormData, password: e.target.value })}
+                required
+              />
+            </div>
+          )}
+
+          {agentFormError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 shrink-0" />
+              <span>{agentFormError}</span>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <Button
+              type="button"
+              variant="outline"
+              size="md"
+              onClick={() => setIsAgentModalOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="md"
+            >
+              {editingAgent ? 'Salvar Alterações' : 'Criar Login & Gerar Credenciais'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal 3: Redefinir Senha do Comissionado */}
+      <Modal
+        isOpen={isResetPasswordModalOpen}
+        onClose={() => setIsResetPasswordModalOpen(false)}
+        title="Redefinir Senha do Comissionado"
+        subtitle={`Defina uma nova senha de acesso para ${selectedAgentForReset?.name}.`}
+        size="sm"
+      >
+        <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-xs">
+            <span className="text-slate-400">Usuário:</span>
+            <div className="font-bold text-slate-900 dark:text-white mt-0.5">{selectedAgentForReset?.name}</div>
+            <div className="font-mono text-slate-500 text-[11px]">{selectedAgentForReset?.email}</div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                Nova Senha
+              </label>
+              <button
+                type="button"
+                onClick={() => setNewPasswordValue(generateRandomPassword())}
+                className="text-[11px] font-bold text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" /> Gerar Aleatória
+              </button>
+            </div>
+            <Input
+              type="text"
+              placeholder="Digite a nova senha..."
+              value={newPasswordValue}
+              onChange={(e) => {
+                setNewPasswordValue(e.target.value);
+                if (resetPasswordError) setResetPasswordError('');
+              }}
+              required
+            />
+          </div>
+
+          {resetPasswordError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs">
+              {resetPasswordError}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsResetPasswordModalOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+            >
+              Salvar Nova Senha
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal 4: Compartilhar Credenciais por WhatsApp / Copiar */}
+      <Modal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        title="Credenciais de Acesso do Parceiro"
+        subtitle="Copie o texto pronto para enviar ao comissionado por WhatsApp ou e-mail."
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-[#0B1220] border border-slate-200 dark:border-white/10 font-mono text-xs whitespace-pre-line text-slate-800 dark:text-slate-200 leading-relaxed select-all">
+            {`🌟 *Acesso ao Portal do Comissionado — RiseMobile*\n\nOlá *${selectedAgentForShare?.name}*, seu acesso exclusivo para acompanhar suas comissões já está ativo!\n\n🔗 *Link de Acesso:* ${typeof window !== 'undefined' ? window.location.origin : 'https://app.risemobile.com'}\n👤 *E-mail:* ${selectedAgentForShare?.email}\n🔑 *Senha:* ${selectedAgentForShare?.password || '123456'}\n\nNo portal você acompanha em tempo real suas peças vendidas, valores e extrato das lojas indicadas. Qualquer dúvida estamos à disposição!`}
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-xs text-slate-400">
+              {copiedNotification ? (
+                <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                  <CheckCircle2 className="w-4 h-4" /> Texto copiado para a área de transferência!
+                </span>
+              ) : (
+                'Clique abaixo para copiar o texto formatado'
+              )}
+            </span>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="md"
+                onClick={() => setIsShareModalOpen(false)}
+              >
+                Fechar
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                onClick={copyShareTextToClipboard}
+                icon={Copy}
+              >
+                {copiedNotification ? 'Copiado!' : 'Copiar para WhatsApp'}
+              </Button>
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   );

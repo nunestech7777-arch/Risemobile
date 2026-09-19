@@ -73,8 +73,8 @@ export const RetailersModule = ({
   const filteredRetailers = retailers.filter(r => {
     const q = searchQuery.toLowerCase().trim();
     return !q || 
-      r.store_name.toLowerCase().includes(q) || 
-      r.contact_name.toLowerCase().includes(q) || 
+      (r.store_name && r.store_name.toLowerCase().includes(q)) || 
+      (r.contact_name && r.contact_name.toLowerCase().includes(q)) || 
       (r.city && r.city.toLowerCase().includes(q));
   });
 
@@ -98,7 +98,17 @@ export const RetailersModule = ({
   const handleOpenEdit = (retailer, e) => {
     e?.stopPropagation();
     setFormData({
-      ...retailer
+      id: retailer.id || '',
+      store_name: retailer.store_name || '',
+      contact_name: retailer.contact_name || '',
+      phone: retailer.phone || '',
+      whatsapp: retailer.whatsapp || '',
+      document: retailer.document || '',
+      city: retailer.city || '',
+      state: retailer.state || '',
+      address: retailer.address || '',
+      notes: retailer.notes || '',
+      commission_per_unit_usd: retailer.commission_per_unit_usd ?? 0
     });
     setFormError('');
     setIsModalOpen(true);
@@ -106,8 +116,8 @@ export const RetailersModule = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.store_name.trim() || !formData.whatsapp.trim()) {
-      setFormError('Preencha o Nome da Loja e o WhatsApp.');
+    if (!formData.store_name || !formData.store_name.trim()) {
+      setFormError('Informe o nome da loja.');
       return;
     }
 
@@ -116,7 +126,8 @@ export const RetailersModule = ({
 
     try {
       await onSaveRetailer({
-        ...formData
+        ...formData,
+        store_name: formData.store_name.trim()
       });
       setIsModalOpen(false);
     } catch (err) {
@@ -184,7 +195,9 @@ export const RetailersModule = ({
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h3 className="text-base font-extrabold text-slate-900 dark:text-white">{r.store_name}</h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-300 mt-0.5">{r.contact_name} • {r.city}/{r.state || 'BR'}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-300 mt-0.5">
+                      {[r.contact_name, [r.city, r.state].filter(Boolean).join('/')].filter(Boolean).join(' • ') || 'Sem contato adicional'}
+                    </p>
                   </div>
                 </div>
 
@@ -203,15 +216,21 @@ export const RetailersModule = ({
               </div>
 
               <div className="mt-5 pt-3 border-t border-slate-100 dark:border-white/10 flex items-center justify-between">
-                <a
-                  href={`https://wa.me/${(r.whatsapp || '').replace(/\D/g, '')}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white hover:underline"
-                >
-                  <MessageSquare className="w-3.5 h-3.5 text-slate-700 dark:text-cyan-300" /> WhatsApp
-                </a>
+                {r.whatsapp ? (
+                  <a
+                    href={`https://wa.me/${(r.whatsapp || '').replace(/\D/g, '')}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white hover:underline"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 text-slate-700 dark:text-cyan-300" /> WhatsApp
+                  </a>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 select-none">
+                    <Phone className="w-3.5 h-3.5 opacity-40" /> Sem WhatsApp
+                  </span>
+                )}
 
                 <div className="flex items-center gap-1">
                   <Button
@@ -245,7 +264,12 @@ export const RetailersModule = ({
           isOpen={Boolean(selectedRetailer)}
           onClose={() => setSelectedRetailer(null)}
           title={selectedRetailer.store_name}
-          subtitle={`Responsável: ${selectedRetailer.contact_name} | WhatsApp: ${selectedRetailer.whatsapp}`}
+          subtitle={
+            [
+              selectedRetailer.contact_name ? `Responsável: ${selectedRetailer.contact_name}` : null,
+              selectedRetailer.whatsapp ? `WhatsApp: ${selectedRetailer.whatsapp}` : null
+            ].filter(Boolean).join(' | ') || 'Sem contatos adicionais'
+          }
           width="max-w-xl"
         >
           <div className="space-y-6">
@@ -272,8 +296,16 @@ export const RetailersModule = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Cidade / Endereço:</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200">{selectedRetailer.city}/{selectedRetailer.state} — {selectedRetailer.address || ''}</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">
+                  {([selectedRetailer.city, selectedRetailer.state].filter(Boolean).join('/') + (selectedRetailer.address ? ` — ${selectedRetailer.address}` : '')) || 'Não informado'}
+                </span>
               </div>
+              {selectedRetailer.notes && (
+                <div className="flex justify-between pt-1 border-t border-slate-100 dark:border-white/5">
+                  <span className="text-slate-400">Observações:</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300 max-w-[65%] text-right">{selectedRetailer.notes}</span>
+                </div>
+              )}
             </div>
 
             {/* Orders Tab */}
@@ -330,13 +362,15 @@ export const RetailersModule = ({
         title={formData.id ? 'Editar Lojista' : 'Cadastrar Novo Lojista'}
         subtitle="Informações cadastrais do parceiro comercial"
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
-              label="Nome da Loja"
-              required
+              label="Nome da Loja *"
               value={formData.store_name}
-              onChange={(e) => setFormData({ ...formData, store_name: e.target.value })}
+              onChange={(e) => {
+                setFormData({ ...formData, store_name: e.target.value });
+                if (formError) setFormError('');
+              }}
               placeholder="Ex: iStore Prime SP"
             />
             <Input
@@ -350,7 +384,6 @@ export const RetailersModule = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="WhatsApp (com DDD)"
-              required
               value={formData.whatsapp}
               onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })}
               placeholder="Ex: 5511988881111"

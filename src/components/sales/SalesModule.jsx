@@ -652,7 +652,7 @@ export const SalesModule = ({
               label="Lojista Parceiro"
               value={newSaleRetailerId || (retailers && retailers.length > 0 ? retailers[0].id : '')}
               onChange={(e) => setNewSaleRetailerId(e.target.value)}
-              options={retailers.map(r => ({ value: r.id, label: `${r.store_name} (${r.contact_name})` }))}
+              options={retailers.map(r => ({ value: r.id, label: r.contact_name ? `${r.store_name} (${r.contact_name})` : r.store_name }))}
               required
             />
             <Input

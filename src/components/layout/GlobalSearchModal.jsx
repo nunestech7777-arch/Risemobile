@@ -48,8 +48,8 @@ export const GlobalSearchModal = ({
 
   const filteredRetailers = q
     ? retailers.filter(r => 
-        r.store_name.toLowerCase().includes(q) || 
-        r.contact_name.toLowerCase().includes(q) ||
+        (r.store_name && r.store_name.toLowerCase().includes(q)) || 
+        (r.contact_name && r.contact_name.toLowerCase().includes(q)) ||
         (r.city && r.city.toLowerCase().includes(q))
       ).slice(0, 4)
     : [];
@@ -190,7 +190,11 @@ export const GlobalSearchModal = ({
                             {r.store_name}
                           </div>
                           <div className="text-xs text-slate-500 dark:text-slate-300">
-                            {r.contact_name} • {r.city}/{r.state} • WhatsApp: {r.whatsapp}
+                            {[
+                              r.contact_name,
+                              [r.city, r.state].filter(Boolean).join('/'),
+                              r.whatsapp ? `WhatsApp: ${r.whatsapp}` : null
+                            ].filter(Boolean).join(' • ') || 'Sem contatos adicionais'}
                           </div>
                         </div>
                         <ArrowRight className="w-4 h-4 text-slate-400 dark:text-slate-300" />
