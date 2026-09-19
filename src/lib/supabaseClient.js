@@ -11,6 +11,7 @@ import {
   INITIAL_RETAILER_REFERRALS
 } from './mockData.js';
 import { DEVICE_DELETE_BLOCKED_MESSAGE } from './deviceRules.js';
+import { allocateDevicesForItems, describeItem, findColorMismatch, findOrderItemForDevice } from './saleAllocation.js';
 
 const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
 const supabaseUrl = env.VITE_SUPABASE_URL || '';
@@ -1481,8 +1482,17 @@ export const DataService = {
           p_notes: orderData.notes || '',
           p_order_number: orderData.order_number || null
         });
-        if (!error && data) return data;
+        if (!error && data) {
+          // Função antiga do banco (sem a migration 020) ignora a cor: nunca deixar passar cor errada.
+          const wrongColor = findColorMismatch(items, data.allocated_devices || []);
+          if (wrongColor) {
+            try { await this.cancelOrder(data.id || data.order_id, 'Cancelado automaticamente: cor solicitada não respeitada'); } catch (cancelErr) { console.warn('Falha ao desfazer reserva com cor errada:', cancelErr); }
+            throw new Error(`O banco ainda não seleciona aparelhos por cor (${wrongColor}). Aplique a migration supabase/migrations/020_sale_color_selection.sql no Supabase e tente novamente.`);
+          }
+          return data;
+        }
       } catch (e) {
+        if (/migration 020/.test(e?.message || '')) throw e;
         console.warn('RPC rpc_reserve_devices_for_order com erro, usando fallback direto no Supabase:', e);
       }
 
@@ -1499,26 +1509,19 @@ export const DataService = {
       let totalAmount = 0;
       let totalUnits = 0;
 
-      for (const item of items) {
+      const { allocations, shortages } = allocateDevicesForItems(allAvailableDevices || [], items);
+      if (shortages.length > 0) {
+        const { index, requested, available } = shortages[0];
+        throw new Error(`Estoque insuficiente para ${describeItem(items[index])} (${available} disponíveis de ${requested} solicitados)`);
+      }
+
+      for (const [itemIndex, item] of items.entries()) {
         const qty = parseInt(item.quantity, 10);
         const unitPrice = parseFloat(item.unit_price_usd);
         totalAmount += qty * unitPrice;
         totalUnits += qty;
 
-        const matching = (allAvailableDevices || [])
-          .filter(d => 
-            d.model === item.model &&
-            d.storage === item.storage &&
-            (!item.grade_id || d.grade_id === item.grade_id) &&
-            !devicesToUpdateIds.includes(d.id)
-          )
-          .sort((a, b) => (b.battery_health || 0) - (a.battery_health || 0));
-
-        if (matching.length < qty) {
-          throw new Error(`Estoque insuficiente para ${item.model} ${item.storage} (${matching.length} disponíveis de ${qty} solicitados)`);
-        }
-
-        const chosen = matching.slice(0, qty);
+        const chosen = allocations[itemIndex];
         chosen.forEach(dev => {
           devicesToUpdateIds.push(dev.id);
           allocatedDevices.push({
@@ -1574,7 +1577,8 @@ export const DataService = {
         grade_id: it.grade_id,
         quantity: parseInt(it.quantity, 10),
         unit_price_usd: parseFloat(it.unit_price_usd),
-        total_price_usd: parseInt(it.quantity, 10) * parseFloat(it.unit_price_usd)
+        total_price_usd: parseInt(it.quantity, 10) * parseFloat(it.unit_price_usd),
+        ...(String(it.color ?? '').trim() ? { color: String(it.color).trim() } : {})
       }));
       await supabase.from('order_items').insert(orderItemsToInsert);
 
@@ -1623,25 +1627,19 @@ export const DataService = {
     let totalAmount = 0;
     let totalUnits = 0;
 
-    for (const item of items) {
+    const { allocations, shortages } = allocateDevicesForItems(updatedDevices, items);
+    if (shortages.length > 0) {
+      const { index, requested, available } = shortages[0];
+      throw new Error(`Estoque insuficiente para ${describeItem(items[index])} (${available} disponíveis de ${requested} solicitados)`);
+    }
+
+    for (const [itemIndex, item] of items.entries()) {
       const qty = parseInt(item.quantity, 10);
       const unitPrice = parseFloat(item.unit_price_usd);
       totalAmount += qty * unitPrice;
       totalUnits += qty;
 
-      const matchingDevices = updatedDevices.filter(d => 
-        d.model === item.model &&
-        d.storage === item.storage &&
-        (!item.grade_id || d.grade_id === item.grade_id) &&
-        d.status === 'Disponível'
-      );
-
-      if (matchingDevices.length < qty) {
-        throw new Error(`Estoque insuficiente para ${item.model} ${item.storage} (${matchingDevices.length} disponíveis de ${qty} solicitados)`);
-      }
-
-      matchingDevices.sort((a, b) => (b.battery_health || 0) - (a.battery_health || 0));
-      const chosen = matchingDevices.slice(0, qty);
+      const chosen = allocations[itemIndex];
 
       chosen.forEach(dev => {
         const idx = updatedDevices.findIndex(d => d.id === dev.id);
@@ -2161,9 +2159,7 @@ export const DataService = {
           throw new Error(`Aparelho ${alloc.devices?.imei || alloc.device_id} não está Vendido e não pode ser devolvido.`);
         }
 
-        const matchingItem = (orderItems || []).find(it =>
-          it.model === alloc.devices?.model && it.storage === alloc.devices?.storage && it.grade_id === alloc.devices?.grade_id
-        );
+        const matchingItem = findOrderItemForDevice(orderItems || [], alloc.devices || {});
         const unitPrice = matchingItem
           ? parseFloat(matchingItem.unit_price_usd)
           : (parseFloat(order.total_amount_usd) || 0) / Math.max(1, totalEverAllocated || deviceIds.length);
@@ -2310,9 +2306,7 @@ export const DataService = {
     const totalEverAllocated = allocatedDevices.length + (order.returned_devices || []).length;
 
     for (const dev of targets) {
-      const matchingItem = (order.items || []).find(it =>
-        it.model === dev.model && it.storage === dev.storage && (!it.grade_id || it.grade_id === dev.grade_id)
-      );
+      const matchingItem = findOrderItemForDevice(order.items, dev);
       const unitPrice = matchingItem
         ? parseFloat(matchingItem.unit_price_usd)
         : (parseFloat(order.total_amount_usd) || 0) / Math.max(1, totalEverAllocated);

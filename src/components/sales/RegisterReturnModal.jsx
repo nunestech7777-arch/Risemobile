@@ -4,6 +4,7 @@ import { Button } from '../ui/Button';
 import { Select } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { formatUSD, formatImeiLabel } from '../../lib/formatters';
+import { findOrderItemForDevice } from '../../lib/saleAllocation';
 
 const RETURN_REASONS = [
   { value: 'Troca solicitada', label: 'Troca solicitada pelo lojista' },
@@ -43,9 +44,7 @@ export const RegisterReturnModal = ({
   const commissionPerUnit = totalOriginalUnits > 0 ? (order?.total_commission_usd || 0) / totalOriginalUnits : 0;
 
   const getDevicePrice = (dev) => {
-    const matchingItem = (order?.items || []).find(it =>
-      it.model === dev.model && it.storage === dev.storage && (!it.grade_id || it.grade_id === dev.grade_id)
-    );
+    const matchingItem = findOrderItemForDevice(order?.items || [], dev);
     if (matchingItem) return parseFloat(matchingItem.unit_price_usd) || 0;
     return totalOriginalUnits > 0 ? (order?.total_amount_usd || 0) / totalOriginalUnits : 0;
   };

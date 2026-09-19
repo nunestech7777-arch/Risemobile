@@ -23,6 +23,7 @@ import { FinalizeSaleModal } from './FinalizeSaleModal';
 import { RegisterReturnModal } from './RegisterReturnModal';
 import { formatUSD, formatImei, formatColor, formatBattery, formatDate, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
 import { IPHONE_MODELS } from '../../lib/deviceOptions';
+import { allocateDevicesForItems, colorKey, getAvailableColors, getRemainingForItem } from '../../lib/saleAllocation';
 
 const STORAGE_OPTIONS = ['64GB', '128GB', '256GB', '512GB', '1TB'];
 
@@ -61,6 +62,7 @@ export const SalesModule = ({
     model: 'iPhone 13',
     storage: '128GB',
     grade_id: grades[0]?.id || '',
+    color: '',
     quantity: 1,
     unit_price_usd: '440.00'
   });
@@ -91,23 +93,6 @@ export const SalesModule = ({
     });
   }, [orders, searchQuery, selectedStatus]);
 
-  // Consulta de estoque físico real no banco/sistema
-  const getRawStockCount = (model, storage, gradeId) => {
-    return devices.filter(d => 
-      d.model === model && 
-      d.storage === storage && 
-      (!gradeId || d.grade_id === gradeId) && 
-      d.status === 'Disponível'
-    ).length;
-  };
-
-  // Quantidade total já inserida na venda atual para uma configuração específica
-  const getQuantityAlreadyInSale = (model, storage, gradeId) => {
-    return saleItems
-      .filter(it => it.model === model && it.storage === storage && (!gradeId || it.grade_id === gradeId))
-      .reduce((sum, it) => sum + (parseInt(it.quantity, 10) || 0), 0);
-  };
-
   // Preço de referência para a configuração selecionada
   const getReferencePrice = (model, storage, gradeId) => {
     const matching = devices.find(d => 
@@ -122,12 +107,17 @@ export const SalesModule = ({
     return '450.00';
   };
 
-  // Disponibilidade líquida em tempo real da configuração atualmente selecionada
-  const remainingAvailable = useMemo(() => {
-    const raw = getRawStockCount(currentItem.model, currentItem.storage, currentItem.grade_id);
-    const inSale = getQuantityAlreadyInSale(currentItem.model, currentItem.storage, currentItem.grade_id);
-    return Math.max(0, raw - inSale);
-  }, [devices, saleItems, currentItem.model, currentItem.storage, currentItem.grade_id]);
+  // Cores disponíveis em estoque para o modelo/armazenamento/grade em configuração
+  const availableColors = useMemo(
+    () => getAvailableColors(devices, currentItem),
+    [devices, currentItem.model, currentItem.storage, currentItem.grade_id]
+  );
+
+  // Disponibilidade líquida em tempo real da configuração (e cor) atualmente selecionada
+  const remainingAvailable = useMemo(
+    () => getRemainingForItem(devices, saleItems, currentItem),
+    [devices, saleItems, currentItem.model, currentItem.storage, currentItem.grade_id, currentItem.color]
+  );
 
   // Atualiza campo do item em configuração
   const handleCurrentItemChange = (field, value) => {
@@ -139,6 +129,9 @@ export const SalesModule = ({
         field === 'grade_id' ? value : currentItem.grade_id
       );
       updated.unit_price_usd = price;
+      // A cor escolhida só vale se existir em estoque na nova configuração
+      const stillAvailable = getAvailableColors(devices, updated).some(c => colorKey(c.color) === colorKey(updated.color));
+      if (!stillAvailable) updated.color = '';
     }
     setCurrentItem(updated);
     setErrorMessage('');
@@ -153,7 +146,7 @@ export const SalesModule = ({
     }
 
     if (qty > remainingAvailable) {
-      setErrorMessage(`Estoque insuficiente para esta configuração (${remainingAvailable} restantes disponíveis).`);
+      setErrorMessage(`Estoque insuficiente para esta configuração${currentItem.color ? ` na cor ${currentItem.color}` : ''} (${remainingAvailable} restantes disponíveis).`);
       return;
     }
 
@@ -161,11 +154,12 @@ export const SalesModule = ({
     const unitPrice = parseFloat(currentItem.unit_price_usd) || 0;
     const targetGradeId = currentItem.grade_id || (grades[0]?.id || '');
 
-    // Se já existir um item com exatamente a mesma configuração na venda, consolida na mesma linha
+    // Se já existir um item com exatamente a mesma configuração (e cor) na venda, consolida na mesma linha
     const existingIndex = saleItems.findIndex(it => 
       it.model === currentItem.model && 
       it.storage === currentItem.storage && 
-      it.grade_id === targetGradeId
+      it.grade_id === targetGradeId &&
+      colorKey(it.color) === colorKey(currentItem.color)
     );
 
     if (existingIndex !== -1) {
@@ -185,6 +179,7 @@ export const SalesModule = ({
         storage: currentItem.storage,
         grade_id: targetGradeId,
         grade_name: gradeObj?.name || 'A++',
+        color: currentItem.color ? String(currentItem.color).trim() : null,
         quantity: qty,
         unit_price_usd: unitPrice,
         total_price_usd: qty * unitPrice
@@ -209,12 +204,7 @@ export const SalesModule = ({
     const targetItem = saleItems.find(it => it.id === id);
     if (!targetItem) return;
 
-    const rawStock = getRawStockCount(targetItem.model, targetItem.storage, targetItem.grade_id);
-    const otherInSale = saleItems
-      .filter(it => it.id !== id && it.model === targetItem.model && it.storage === targetItem.storage && it.grade_id === targetItem.grade_id)
-      .reduce((sum, it) => sum + (parseInt(it.quantity, 10) || 0), 0);
-
-    const maxAllowed = Math.max(1, rawStock - otherInSale);
+    const maxAllowed = Math.max(1, getRemainingForItem(devices, saleItems.filter(it => it.id !== id), targetItem));
     const requestedQty = parseInt(newQty, 10);
     const validQty = isNaN(requestedQty) ? 1 : Math.max(1, Math.min(maxAllowed, requestedQty));
 
@@ -242,22 +232,10 @@ export const SalesModule = ({
   // Aparelhos que serão automaticamente selecionados pelo sistema
   const autoAllocatedPreview = useMemo(() => {
     const result = [];
-    const usedDeviceIds = new Set();
+    const { allocations } = allocateDevicesForItems(devices, saleItems);
 
-    for (const item of saleItems) {
-      const matching = devices
-        .filter(d => 
-          d.model === item.model &&
-          d.storage === item.storage &&
-          (!item.grade_id || d.grade_id === item.grade_id) &&
-          d.status === 'Disponível' &&
-          !usedDeviceIds.has(d.id)
-        )
-        .sort((a, b) => (b.battery_health || 0) - (a.battery_health || 0));
-
-      const chosen = matching.slice(0, item.quantity);
-      chosen.forEach(d => {
-        usedDeviceIds.add(d.id);
+    saleItems.forEach((item, itemIndex) => {
+      allocations[itemIndex].forEach(d => {
         result.push({
           ...d,
           item_model: item.model,
@@ -265,7 +243,7 @@ export const SalesModule = ({
           unit_price_usd: item.unit_price_usd
         });
       });
-    }
+    });
 
     return result;
   }, [devices, saleItems]);
@@ -416,7 +394,7 @@ export const SalesModule = ({
                         : `${totalUnits} ${totalUnits === 1 ? 'aparelho' : 'aparelhos'}`}
                     </div>
                     <div className="text-[11px] text-slate-400 truncate max-w-xs">
-                      {sale.items?.map(i => `${i.quantity}x ${i.model} ${i.storage}`).join(', ') || 'Aparelhos selecionados'}
+                      {sale.items?.map(i => `${i.quantity}x ${i.model} ${i.storage}${i.color ? ` ${i.color}` : ''}`).join(', ') || 'Aparelhos selecionados'}
                     </div>
                   </TableCell>
                   <TableCell className="font-semibold text-slate-600 dark:text-slate-300">
@@ -482,7 +460,7 @@ export const SalesModule = ({
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         title="Nova Venda de iPhones"
-        subtitle="Selecione modelos, grade e quantidade. O backend alocará os melhores IMEIs automaticamente."
+        subtitle="Selecione modelo, grade, cor e quantidade. O sistema escolhe automaticamente os aparelhos de maior bateria."
         size="xl"
       >
         <div className="space-y-6">
@@ -528,13 +506,27 @@ export const SalesModule = ({
             </div>
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
-              <div className="w-full sm:w-48">
-                <CurrencyInput
-                  label="Preço Unitário (USD)"
-                  value={currentItem.unit_price_usd}
-                  onChange={(val) => handleCurrentItemChange('unit_price_usd', val)}
-                  currency="USD"
-                />
+              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                <div className="w-full sm:w-48">
+                  <CurrencyInput
+                    label="Preço Unitário (USD)"
+                    value={currentItem.unit_price_usd}
+                    onChange={(val) => handleCurrentItemChange('unit_price_usd', val)}
+                    currency="USD"
+                  />
+                </div>
+                <div className="w-full sm:w-56">
+                  <Select
+                    id="sale-color"
+                    label="Cor"
+                    value={currentItem.color}
+                    onChange={(e) => handleCurrentItemChange('color', e.target.value)}
+                    options={[
+                      { value: '', label: 'Qualquer cor' },
+                      ...availableColors.map(c => ({ value: c.color, label: `${c.color} (${c.count})` }))
+                    ]}
+                  />
+                </div>
               </div>
 
               <div className="flex items-end justify-end">
@@ -570,7 +562,7 @@ export const SalesModule = ({
               </div>
             ) : (
               <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
-                <Table headers={['Modelo & Configuração', 'Grade', 'Preço Unit.', 'Qtd', 'Subtotal', 'Ação']}>
+                <Table headers={['Modelo & Configuração', 'Grade', 'Cor', 'Preço Unit.', 'Qtd', 'Subtotal', 'Ação']}>
                   {saleItems.map((item, idx) => (
                     <TableRow key={item.id}>
                       <TableCell className="font-bold text-slate-900 dark:text-white">
@@ -580,6 +572,9 @@ export const SalesModule = ({
                         <span className="inline-flex px-2 py-0.5 rounded text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
                           {item.grade_name}
                         </span>
+                      </TableCell>
+                      <TableCell className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        {item.color || <span className="text-slate-400 font-normal">Qualquer cor</span>}
                       </TableCell>
                       <TableCell className="font-semibold text-slate-700 dark:text-slate-300">
                         {formatUSD(item.unit_price_usd)}
