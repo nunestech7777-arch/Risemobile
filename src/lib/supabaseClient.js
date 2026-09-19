@@ -271,6 +271,8 @@ const normalizeOrderFromSupabase = (o) => {
 const isUuid = (value) =>
   typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
+export const RESET_CONFIRMATION_TEXT = 'APAGAR TUDO';
+
 const isMissingFunctionError = (error) => Boolean(error) && (
   error.code === 'PGRST202' ||
   error.code === '42883' ||
@@ -3078,11 +3080,34 @@ export const DataService = {
     return { success: true };
   },
 
-  // Resetar para base 100% limpa para produção
-  resetToDemoData() {
+  // Botão "Zerar Base de Dados": no Supabase quem decide é o banco (admin + confirmação digitada).
+  async resetOperationalData(confirmation, userResponsavel = 'admin') {
+    if (String(confirmation ?? '').trim() !== RESET_CONFIRMATION_TEXT) {
+      throw new Error(`Confirmação inválida. Digite ${RESET_CONFIRMATION_TEXT} para zerar a base de dados.`);
+    }
+
+    if (isLiveSupabaseConfigured) {
+      const { data, error } = await supabase.rpc('rpc_reset_operational_data', { p_confirmation: RESET_CONFIRMATION_TEXT });
+      if (error) {
+        if (isMissingFunctionError(error)) {
+          throw new Error('A função de zerar a base ainda não existe no banco. Aplique a migration supabase/migrations/019_reset_operational_data.sql no Supabase e tente novamente.');
+        }
+        throw new Error(error.message);
+      }
+      return data;
+    }
+
     this.clearAllOperationalData();
-    setStored(STORAGE_KEYS.GRADES, INITIAL_GRADES);
-    setStored(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+    setStored(STORAGE_KEYS.AUDIT_LOGS, [{
+      id: `audit-${Date.now()}`,
+      table_name: '*',
+      record_id: null,
+      action: 'DATA_RESET',
+      new_data: { motivo: 'Base zerada pelo administrador' },
+      performed_by: userResponsavel || 'admin',
+      created_at: new Date().toISOString()
+    }]);
+    return { success: true, performed_by: userResponsavel || 'admin' };
   }
 };
 

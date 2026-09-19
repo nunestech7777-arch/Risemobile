@@ -15,6 +15,7 @@ import { PaymentsModule } from './components/payments/PaymentsModule';
 import { CommissionsModule } from './components/commissions/CommissionsModule';
 import { ProfitModule } from './components/profit/ProfitModule';
 import { ReportsModule } from './components/reports/ReportsModule';
+import { SettingsModule } from './components/settings/SettingsModule';
 import { CommissionAgentPortal } from './components/commission_portal/CommissionAgentPortal';
 import { ShaderBackground } from './components/ui/adisyon-shader';
 
@@ -323,6 +324,12 @@ export function App() {
     return res;
   };
 
+  const handleResetOperationalData = async (confirmation) => {
+    const res = await DataService.resetOperationalData(confirmation, user?.email || 'admin');
+    await loadAllData();
+    return res;
+  };
+
   const handleUpdateDevice = async (deviceId, changes) => {
     const res = await DataService.updateDevice(deviceId, changes, user?.email || 'admin');
     await loadAllData();
@@ -354,6 +361,7 @@ export function App() {
     commissions: { title: 'Comissões', subtitle: 'Comissão única oficial por indicação de lojista' },
     profit: { title: 'Faturamento', subtitle: 'Acompanhe o faturamento realizado e o potencial de vendas da operação' },
     reports: { title: 'Relatórios & Exportação', subtitle: 'Exportação em Excel (.xlsx) e CSV' },
+    settings: { title: 'Configurações', subtitle: 'Ações administrativas da base de dados' },
   };
 
   // Alertas pendentes
@@ -578,6 +586,10 @@ export function App() {
               installments={installments}
               grades={grades}
             />
+          )}
+
+          {activeTab === 'settings' && (
+            <SettingsModule onResetData={handleResetOperationalData} />
           )}
         </div>
       </main>
