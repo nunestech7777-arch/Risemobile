@@ -219,16 +219,8 @@ export const AuthService = {
           user = session?.user || applyAccessToSession({ user: rawUser }, access).user;
         }
 
+        // No modo Supabase a sessão é guardada apenas pelo próprio Supabase
         memoryAuthSession = session;
-        if (session) {
-          try {
-            if (typeof localStorage !== 'undefined') {
-              localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
-            }
-          } catch {
-            // Safe storage fallback
-          }
-        }
 
         notifyListeners('SIGNED_IN', session);
         return { success: true, user, session };
@@ -478,6 +470,16 @@ export const AuthService = {
           memoryAuthSession = enriched;
           return enriched;
         }
+
+        // Modo Supabase: sem sessão no Supabase = sem login. Nunca confiar em cópia
+        // local, senão a tela parece logada enquanto as chamadas ao banco saem anônimas.
+        memoryAuthSession = null;
+        try {
+          if (typeof localStorage !== 'undefined') localStorage.removeItem(AUTH_STORAGE_KEY);
+        } catch {
+          // Safe storage fallback
+        }
+        return null;
       }
 
       if (typeof localStorage !== 'undefined') {
