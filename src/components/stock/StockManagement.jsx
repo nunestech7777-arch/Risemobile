@@ -18,7 +18,7 @@ import { Modal } from '../ui/Modal';
 import { EmptyState } from '../ui/EmptyState';
 import { DeviceHistoryDrawer } from './DeviceHistoryDrawer';
 import { formatUSD, formatImei, formatColor, formatDate, getStatusBadge, getBatteryHealthBadge, getDeviceCompleteness } from '../../lib/formatters';
-import { DELETE_REASON_OPTIONS, DEVICE_DELETE_BLOCKED_MESSAGE, buildDeletionReason, getDeviceDeleteBlock, getDevicesWithCommercialHistory } from '../../lib/deviceRules';
+import { DELETE_REASON_OPTIONS, DEVICE_DELETE_BLOCKED_MESSAGE, buildDeletionReason, getDeviceDeleteBlock, getDevicesWithCommercialHistory, getStockGroupKey, isInCommercialStock } from '../../lib/deviceRules';
 import { exportDataToFile } from '../../lib/excelUtils';
 import { COLOR_OPTIONS } from '../../lib/deviceOptions';
 
@@ -39,6 +39,8 @@ export const StockManagement = ({
   const [selectedGrade, setSelectedGrade] = useState('ALL');
   const [selectedStatus, setSelectedStatus] = useState('ALL');
   const [selectedCompleteness, setSelectedCompleteness] = useState('ALL'); // ALL, INCOMPLETE, NO_IMEI
+  // Grupo aberto pelo botão "Ver aparelhos" ({ key, label }); null = sem filtro de grupo
+  const [selectedGroup, setSelectedGroup] = useState(null);
 
   // Edição dos dados opcionais de um aparelho (IMEI/Serial, cor, bateria, custo, preço)
   const [editingDevice, setEditingDevice] = useState(null);
@@ -62,15 +64,19 @@ export const StockManagement = ({
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
   const [editingGrade, setEditingGrade] = useState({ name: '', description: '', badge_color: 'lavender' });
 
-  // Lista única de modelos existentes
+  // Estoque comercial (Disponível + Reservado): a mesma base para tabela agrupada,
+  // lista individual, busca, filtros e "Ver aparelhos". Vendidos ficam só no histórico de vendas.
+  const stockDevices = useMemo(() => devices.filter(isInCommercialStock), [devices]);
+
+  // Lista única de modelos existentes no estoque
   const uniqueModels = useMemo(() => {
-    const set = new Set(devices.map(d => d.model));
+    const set = new Set(stockDevices.map(d => d.model));
     return ['ALL', ...Array.from(set).sort()];
-  }, [devices]);
+  }, [stockDevices]);
 
   // Filtros aplicados
   const filteredDevices = useMemo(() => {
-    return devices.filter(d => {
+    return stockDevices.filter(d => {
       const q = searchQuery.toLowerCase().trim();
       const matchSearch = !q || 
         (d.imei || '').toLowerCase().includes(q) || 
@@ -86,18 +92,20 @@ export const StockManagement = ({
         (selectedCompleteness === 'INCOMPLETE' && !getDeviceCompleteness(d).complete) ||
         (selectedCompleteness === 'NO_IMEI' && !(d.imei || '').trim());
 
-      return matchSearch && matchModel && matchGrade && matchStatus && matchCompleteness;
+      const matchGroup = !selectedGroup || getStockGroupKey(d, grades) === selectedGroup.key;
+
+      return matchSearch && matchModel && matchGrade && matchStatus && matchCompleteness && matchGroup;
     });
-  }, [devices, searchQuery, selectedModel, selectedGrade, selectedStatus, selectedCompleteness]);
+  }, [stockDevices, grades, searchQuery, selectedModel, selectedGrade, selectedStatus, selectedCompleteness, selectedGroup]);
 
   // Agrupamento por Modelo + Armazenamento + Grade
   const groupedStock = useMemo(() => {
     const map = new Map();
 
-    devices.forEach(d => {
+    stockDevices.forEach(d => {
       const gradeObj = grades.find(g => g.id === d.grade_id);
       const gradeName = gradeObj ? gradeObj.name : 'A++';
-      const key = `${d.model}__${d.storage}__${gradeName}`;
+      const key = getStockGroupKey(d, grades);
 
       if (!map.has(key)) {
         map.set(key, {
@@ -109,8 +117,6 @@ export const StockManagement = ({
           total: 0,
           available: 0,
           reserved: 0,
-          sold: 0,
-          adjusted: 0,
           price: d.suggested_price_usd || d.cost_price_usd || 0,
           totalCost: 0,
           devices: []
@@ -118,12 +124,11 @@ export const StockManagement = ({
       }
 
       const entry = map.get(key);
-      entry.total += 1;
+      // TOTAL = DISPONÍVEIS + RESERVADOS (stockDevices só contém esses dois status)
       entry.totalCost += (d.cost_price_usd || 0);
       if (d.status === 'Disponível') entry.available += 1;
       else if (d.status === 'Reservado') entry.reserved += 1;
-      else if (d.status === 'Vendido') entry.sold += 1;
-      else if (d.status === 'Retirado por ajuste') entry.adjusted += 1;
+      entry.total = entry.available + entry.reserved;
 
       entry.devices.push(d);
       if (d.suggested_price_usd || d.cost_price_usd) {
@@ -131,12 +136,12 @@ export const StockManagement = ({
       }
     });
 
-    const list = Array.from(map.values());
+    const list = Array.from(map.values()).filter(item => item.total > 0);
     if (selectedModel !== 'ALL') {
       return list.filter(item => item.model === selectedModel);
     }
     return list;
-  }, [devices, grades, selectedModel]);
+  }, [stockDevices, grades, selectedModel]);
 
   // Exportar lista atual para Excel
   const handleExportExcel = () => {
@@ -224,10 +229,10 @@ export const StockManagement = ({
       {/* Top Bar: Tabs & Action Buttons */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         {/* Navigation Tabs Pill */}
-        <div className="flex items-center p-1 bg-white dark:bg-[#0B101B]/80 dark:backdrop-blur-xl border border-slate-200 dark:border-white/12 rounded-full shadow-xs">
+        <div className="grid grid-cols-2 gap-1 sm:flex sm:items-center p-1 bg-white dark:bg-[#0B101B]/80 dark:backdrop-blur-xl border border-slate-200 dark:border-white/12 rounded-2xl sm:rounded-full shadow-xs">
           <button
             onClick={() => setActiveTab('grouped')}
-            className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${
+            className={`px-3 sm:px-4 py-2 min-h-10 sm:min-h-0 rounded-xl sm:rounded-full text-xs font-bold transition-all ${
               activeTab === 'grouped'
                 ? 'bg-[#111418] text-white dark:bg-white dark:text-slate-950 shadow-md'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white'
@@ -236,18 +241,18 @@ export const StockManagement = ({
             Visão Agrupada ({groupedStock.length})
           </button>
           <button
-            onClick={() => setActiveTab('devices')}
-            className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${
+            onClick={() => { setSelectedGroup(null); setActiveTab('devices'); }}
+            className={`px-3 sm:px-4 py-2 min-h-10 sm:min-h-0 rounded-xl sm:rounded-full text-xs font-bold transition-all ${
               activeTab === 'devices'
                 ? 'bg-[#111418] text-white dark:bg-white dark:text-slate-950 shadow-md'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white'
             }`}
           >
-            Aparelhos Individuais ({devices.length})
+            Aparelhos Individuais ({stockDevices.length})
           </button>
           <button
             onClick={() => setActiveTab('grades')}
-            className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${
+            className={`px-3 sm:px-4 py-2 min-h-10 sm:min-h-0 rounded-xl sm:rounded-full text-xs font-bold transition-all ${
               activeTab === 'grades'
                 ? 'bg-[#111418] text-white dark:bg-white dark:text-slate-950 shadow-md'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white'
@@ -258,7 +263,7 @@ export const StockManagement = ({
           {onDeleteDevice && (
             <button
               onClick={() => setActiveTab('removed')}
-              className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${
+              className={`px-3 sm:px-4 py-2 min-h-10 sm:min-h-0 rounded-xl sm:rounded-full text-xs font-bold transition-all ${
                 activeTab === 'removed'
                   ? 'bg-[#111418] text-white dark:bg-white dark:text-slate-950 shadow-md'
                   : 'text-slate-600 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white'
@@ -294,7 +299,7 @@ export const StockManagement = ({
 
       {/* TAB 1: VISÃO AGRUPADA (MODELO + ARMAZENAMENTO + GRADE) */}
       {activeTab === 'grouped' && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">Estoque Agrupado por Configuração</h3>
@@ -356,7 +361,12 @@ export const StockManagement = ({
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        setSelectedModel(group.model);
+                        setSearchQuery('');
+                        setSelectedModel('ALL');
+                        setSelectedGrade('ALL');
+                        setSelectedStatus('ALL');
+                        setSelectedCompleteness('ALL');
+                        setSelectedGroup({ key: group.key, label: `${group.model} ${group.storage} · Grade ${group.gradeName}` });
                         setActiveTab('devices');
                       }}
                     >
@@ -372,9 +382,9 @@ export const StockManagement = ({
 
       {/* TAB 2: LISTA DE APARELHOS INDIVIDUAIS */}
       {activeTab === 'devices' && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           {/* Filters Bar */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3 mb-6 [&>*:first-child]:col-span-2 lg:[&>*:first-child]:col-span-1">
             <Input
               placeholder="Buscar por IMEI, cor, modelo..."
               value={searchQuery}
@@ -400,9 +410,7 @@ export const StockManagement = ({
               options={[
                 { value: 'ALL', label: 'Todos os Status' },
                 { value: 'Disponível', label: 'Disponível' },
-                { value: 'Reservado', label: 'Reservado' },
-                { value: 'Vendido', label: 'Vendido' },
-                { value: 'Retirado por ajuste', label: 'Retirado por ajuste' }
+                { value: 'Reservado', label: 'Reservado' }
               ]}
             />
             <Select
@@ -415,6 +423,22 @@ export const StockManagement = ({
               ]}
             />
           </div>
+
+          {selectedGroup && (
+            <div className="flex flex-wrap items-center gap-2 -mt-3 mb-5 text-xs">
+              <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md font-bold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700">
+                {selectedGroup.label} — {filteredDevices.length} un.
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroup(null)}
+                  aria-label="Remover filtro de configuração"
+                  className="text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                >
+                  ✕
+                </button>
+              </span>
+            </div>
+          )}
 
           {filteredDevices.length === 0 ? (
             <EmptyState
@@ -518,7 +542,7 @@ export const StockManagement = ({
 
       {/* TAB: APARELHOS REMOVIDOS (auditoria — não fazem parte do estoque operacional) */}
       {activeTab === 'removed' && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <div className="mb-6">
             <h3 className="text-base font-bold text-slate-900 dark:text-white">Aparelhos Removidos</h3>
             <p className="text-xs text-slate-400">Cadastros apagados por engano. Ficam registrados para auditoria e não entram em estoque, reservas nem vendas.</p>
@@ -570,7 +594,7 @@ export const StockManagement = ({
 
       {/* TAB 3: GESTÃO DE GRADES */}
       {activeTab === 'grades' && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">Grades Estéticas Configuráveis</h3>

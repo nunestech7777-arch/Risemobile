@@ -9,7 +9,8 @@ import {
   CheckCircle2, 
   ShieldCheck,
   KeyRound,
-  ArrowLeft
+  ArrowLeft,
+  PlayCircle
 } from 'lucide-react';
 import { RiseMobileLogo } from '../common/RiseMobileLogo';
 import { ShaderBackground } from '../ui/adisyon-shader';
@@ -65,6 +66,27 @@ export const LoginScreen = ({
     } catch (err) {
       console.error('Login error:', err);
       setErrorMessage('Não foi possível acessar sua conta. Tente novamente.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Entrar na conta demo (dados fictícios, só neste navegador)
+  const handleDemoLogin = async () => {
+    if (isLoading) return;
+    setErrorMessage('');
+    setSuccessMessage('');
+    setIsLoading(true);
+    try {
+      const res = await AuthService.signInDemo();
+      if (res.success) {
+        if (onLoginSuccess) onLoginSuccess(res.user, res.session);
+      } else {
+        setErrorMessage(res.error || 'Não foi possível abrir a conta demo.');
+      }
+    } catch (err) {
+      console.error('Demo login error:', err);
+      setErrorMessage('Não foi possível abrir a conta demo. Tente novamente.');
     } finally {
       setIsLoading(false);
     }
@@ -321,6 +343,25 @@ export const LoginScreen = ({
                     </>
                   )}
                 </button>
+
+                {/* Conta demo com dados fictícios */}
+                <div className="flex items-center gap-3 pt-2">
+                  <span className="h-px flex-1 bg-white/15" />
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">ou</span>
+                  <span className="h-px flex-1 bg-white/15" />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDemoLogin}
+                  disabled={isLoading}
+                  className="w-full h-11 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-white font-semibold text-sm border border-white/20 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <PlayCircle className="w-4 h-4" />
+                  <span>Acessar conta demo</span>
+                </button>
+                <p className="text-[11px] text-center text-slate-300 leading-snug">
+                  Dados fictícios de exemplo, salvos apenas neste navegador.
+                </p>
               </form>
             )}
 

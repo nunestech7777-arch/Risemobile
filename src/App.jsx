@@ -45,6 +45,7 @@ export function App() {
   const [deletedDevices, setDeletedDevices] = useState([]);
   const [retailers, setRetailers] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [ordersLoadError, setOrdersLoadError] = useState('');
   const [installments, setInstallments] = useState([]);
   const [movements, setMovements] = useState([]);
   const [adjustments, setAdjustments] = useState([]);
@@ -157,6 +158,13 @@ export function App() {
     }
   };
 
+  // Restaurar os dados fictícios da conta demo
+  const handleResetDemo = async () => {
+    if (!window.confirm('Restaurar os dados de exemplo? As alterações feitas na conta demo serão descartadas.')) return;
+    await AuthService.resetDemoData();
+    await loadAllData();
+  };
+
   // Load All System Data (Only when Authenticated as Admin)
   const loadAllData = useCallback(async () => {
     if (!session) return;
@@ -184,7 +192,11 @@ export function App() {
         DataService.getDevices(),
         DataService.getDeletedDevices(),
         DataService.getRetailers(),
-        DataService.getOrders(),
+        // Erro nas vendas não derruba o resto da carga; o Dashboard mostra o erro em vez de valores
+        DataService.getOrders().then(
+          (list) => { setOrdersLoadError(''); return list; },
+          (err) => { setOrdersLoadError(err.message || 'Erro ao carregar vendas.'); return []; }
+        ),
         DataService.getInstallments(),
         DataService.getMovements(),
         DataService.getAdjustments(),
@@ -382,8 +394,8 @@ export function App() {
   // 1. Initial Session Check (Splash Screen — Eliminates flash of private content)
   if (isAuthChecking) {
     return (
-      <div className="min-h-screen bg-[#F4F7FB] dark:bg-[#030407] dark-ambient-canvas flex flex-col items-center justify-center relative overflow-hidden text-slate-900 dark:text-white transition-colors duration-300">
-        <div className="hidden dark:block pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
+      <div className="min-h-dvh bg-[#F4F7FB] dark:bg-[#030407] dark-ambient-canvas flex flex-col items-center justify-center relative overflow-hidden text-slate-900 dark:text-white transition-colors duration-300">
+        <div className="hidden md:dark:block pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
           <ShaderBackground className="w-full h-full" />
         </div>
         <div className="relative z-10 flex flex-col items-center gap-4 animate-pulse">
@@ -422,9 +434,9 @@ export function App() {
 
   // 4. Authenticated State: Full RiseMobile Administrative System
   return (
-    <div className="min-h-screen bg-[#EEF2F6] dark:bg-[#030407] dark-ambient-canvas flex p-3 sm:p-4 gap-4 max-w-[1600px] mx-auto transition-colors duration-200 text-slate-900 dark:text-slate-100 relative">
+    <div className="min-h-dvh bg-[#EEF2F6] dark:bg-[#030407] dark-ambient-canvas flex p-3 sm:p-4 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pl-4 sm:pr-4 sm:pb-4 gap-4 max-w-[1600px] mx-auto transition-colors duration-200 text-slate-900 dark:text-slate-100 relative">
       {/* 21st.dev Adisyon Waves Shader Atmosphere Layer (Dark Mode) */}
-      <div className="hidden dark:block pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
+      <div className="hidden md:dark:block pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
         <ShaderBackground className="w-full h-full" />
       </div>
 
@@ -443,7 +455,7 @@ export function App() {
       {isMobileMenuOpen && (
         <div className="fixed inset-0 z-50 flex md:hidden">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
-          <div className="relative z-10 w-auto max-w-[90vw] h-full p-2 shadow-modal">
+          <div className="relative z-10 w-auto max-w-[90vw] h-full p-2 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-modal">
             <Sidebar
               activeTab={activeTab}
               onSelectTab={setActiveTab}
@@ -476,6 +488,19 @@ export function App() {
         />
 
 
+        {user?.user_metadata?.is_demo && (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">
+            <span>Conta demo — todos os dados são fictícios e ficam salvos apenas neste navegador.</span>
+            <button
+              type="button"
+              onClick={handleResetDemo}
+              className="rounded-lg border border-amber-400/60 px-2.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-400/20 cursor-pointer"
+            >
+              Restaurar dados de exemplo
+            </button>
+          </div>
+        )}
+
         {/* Dynamic Screen Renderer */}
         <div className="flex-1">
           {activeTab === 'dashboard' && (
@@ -485,6 +510,8 @@ export function App() {
               retailers={retailers}
               installments={installments}
               onNavigate={handleNavigate}
+              ordersLoadError={ordersLoadError}
+              onRetryLoad={loadAllData}
             />
           )}
 
@@ -529,6 +556,9 @@ export function App() {
               devices={devices}
               grades={grades}
               exchangeRate={exchangeRate}
+              user={user}
+              ordersLoadError={ordersLoadError}
+              onReloadData={loadAllData}
               onReserveOrder={handleReserveOrder}
               onCancelOrder={handleCancelOrder}
               onDeleteOrder={handleDeleteOrder}

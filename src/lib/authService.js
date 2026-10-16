@@ -1,5 +1,6 @@
 // RISEMOBILE: Official Authentication Service (Supabase Auth Engine)
-import { supabase, isLiveSupabaseConfigured } from './supabaseClient.js';
+import { supabase, isLiveSupabaseConfigured, isDemoMode, setDemoMode, demoStorage } from './supabaseClient.js';
+import { seedDemoData, DEMO_EMAIL, DEMO_PASSWORD } from './demoData.js';
 
 const AUTH_STORAGE_KEY = 'risemobile_auth_session';
 let memoryAuthSession = null;
@@ -180,6 +181,13 @@ export const AuthService = {
       };
     }
 
+    // Conta demo: funciona em qualquer modo e nunca usa o Supabase
+    if (cleanEmail === DEMO_EMAIL && password === DEMO_PASSWORD) {
+      return this.signInDemo();
+    }
+    // Qualquer outro login volta ao motor de dados normal
+    if (isDemoMode()) setDemoMode(false);
+
     try {
       if (isLiveSupabaseConfigured && supabase) {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -226,11 +234,10 @@ export const AuthService = {
         return { success: true, user, session };
       } else {
         // Modo Local/Demonstração Controlado
-        // 1. Administradores padrão
+        // 1. Administrador padrão
         const isAuthorizedAdmin = (cleanEmail === 'admin@risemobile.com' && password === 'admin123');
-        const isAuthorizedDemo = (cleanEmail === 'demo@risemobile.com' && password === 'demo123');
 
-        if (isAuthorizedAdmin || isAuthorizedDemo) {
+        if (isAuthorizedAdmin) {
           const userName = cleanEmail.split('@')[0].replace('.', ' ');
           const formattedName = userName.charAt(0).toUpperCase() + userName.slice(1);
           
@@ -344,6 +351,60 @@ export const AuthService = {
   },
 
   /**
+   * Conta demo: gera dados fictícios no navegador e entra como administrador de demonstração.
+   * Nunca chama o Supabase (ver setDemoMode em supabaseClient.js).
+   */
+  async signInDemo() {
+    try {
+      await seedDemoData();
+
+      const sessionUser = {
+        ...DEFAULT_AUTH_USER,
+        id: 'usr-demo-account',
+        email: DEMO_EMAIL,
+        user_metadata: {
+          name: 'Conta Demo',
+          role: 'admin',
+          avatar_initials: 'DM',
+          is_demo: true
+        }
+      };
+      const session = {
+        access_token: `rise_demo_token_${Date.now()}`,
+        token_type: 'bearer',
+        expires_in: 3600 * 24,
+        expires_at: Math.floor(Date.now() / 1000) + (3600 * 24),
+        user: sessionUser
+      };
+
+      memoryAuthSession = session;
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+        }
+      } catch {
+        // Safe storage fallback
+      }
+
+      notifyListeners('SIGNED_IN', session);
+      return { success: true, user: sessionUser, session };
+    } catch (err) {
+      console.error('Erro ao preparar a conta demo:', err);
+      setDemoMode(false);
+      return { success: false, error: 'Não foi possível preparar a conta demo. Tente novamente.' };
+    }
+  },
+
+  /**
+   * Restaura os dados fictícios originais da conta demo (descarta as alterações feitas nela)
+   */
+  async resetDemoData() {
+    if (!isDemoMode()) return { success: false };
+    await seedDemoData();
+    return { success: true };
+  },
+
+  /**
    * Encerra a sessão atual (Logout)
    */
   async signOut() {
@@ -354,6 +415,10 @@ export const AuthService = {
     } catch (err) {
       console.warn('Erro ao deslogar no Supabase:', err);
     } finally {
+      if (isDemoMode()) {
+        demoStorage.clear();
+        setDemoMode(false);
+      }
       memoryAuthSession = null;
       accessCache.clear();
       try {
@@ -520,8 +585,11 @@ export const AuthService = {
     listeners.add(callback);
 
     let supabaseUnsubscribe = null;
-    if (isLiveSupabaseConfigured && supabase) {
+    // Registrado sempre que o cliente existe (mesmo se o app abriu em modo demo, para que um
+    // login real posterior receba os eventos do Supabase); eventos ignorados enquanto a demo está ativa.
+    if (supabase) {
       const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+        if (isDemoMode()) return;
         if (!session?.user) {
           memoryAuthSession = session;
           callback(event, session);

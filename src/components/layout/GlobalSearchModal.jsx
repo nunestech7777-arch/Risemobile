@@ -15,6 +15,10 @@ export const GlobalSearchModal = ({
 
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isOpen) {
+        onClose();
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         if (isOpen) onClose();
@@ -57,12 +61,12 @@ export const GlobalSearchModal = ({
   const hasResults = filteredDevices.length > 0 || filteredOrders.length > 0 || filteredRetailers.length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4">
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[max(1rem,env(safe-area-inset-top))] sm:pt-20 p-4">
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       
       <div className="relative w-full max-w-2xl bg-white dark:bg-[#0D121D]/95 dark:backdrop-blur-2xl border border-slate-200 dark:border-white/15 rounded-3xl shadow-modal dark:shadow-[0_25px_60px_rgba(0,0,0,0.7)] overflow-hidden z-10 flex flex-col">
         {/* Search Input Bar */}
-        <div className="flex items-center px-5 py-4 border-b border-slate-100 dark:border-white/10 gap-3">
+        <div className="flex items-center px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-100 dark:border-white/10 gap-3">
           <Search className="w-5 h-5 text-slate-400 dark:text-slate-300 shrink-0" />
           <input
             autoFocus
@@ -77,13 +81,16 @@ export const GlobalSearchModal = ({
               <X className="w-4 h-4" />
             </button>
           )}
+          <button type="button" onClick={onClose} className="sm:hidden shrink-0 min-h-10 px-3 rounded-xl bg-slate-100 dark:bg-white/10 text-sm font-bold text-slate-700 dark:text-slate-200">
+            Fechar
+          </button>
           <kbd className="hidden sm:inline-block px-2 py-1 text-[11px] bg-slate-100 dark:bg-white/[0.08] dark:border dark:border-white/10 rounded font-mono text-slate-500 dark:text-slate-300">
             ESC
           </kbd>
         </div>
 
         {/* Results Container */}
-        <div className="max-h-[60vh] overflow-y-auto p-4 space-y-4 custom-scrollbar">
+        <div className="max-h-[55dvh] sm:max-h-[60vh] overflow-y-auto p-4 space-y-4 custom-scrollbar">
           {!query ? (
             <div className="py-8 text-center text-xs text-slate-500 dark:text-slate-300">
               Digite um termo para pesquisar em todo o catálogo, pedidos e lojistas.

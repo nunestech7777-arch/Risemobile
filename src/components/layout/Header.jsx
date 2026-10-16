@@ -52,21 +52,22 @@ export const Header = ({
   const userInitials = user?.user_metadata?.avatar_initials || (userName ? userName.slice(0, 2).toUpperCase() : 'RM');
 
   return (
-    <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 px-1 mb-6 relative z-10">
+    <header className="flex flex-wrap sm:flex-col sm:items-start lg:flex-row lg:items-center lg:flex-nowrap items-center justify-between gap-x-2 gap-y-3 sm:gap-4 py-1 sm:py-2 px-1 mb-4 sm:mb-6 relative z-10">
       {/* Left: Mobile Toggle & Page Title */}
-      <div className="flex items-center gap-3">
+      <div className="order-1 flex flex-1 sm:flex-none items-center gap-3 min-w-0">
         <button
           onClick={onToggleMobileMenu}
-          className="md:hidden p-2.5 rounded-2xl bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 shadow-xs"
+          aria-label="Abrir menu"
+          className="md:hidden shrink-0 p-2.5 rounded-2xl bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 shadow-xs"
         >
           <Menu className="w-5 h-5" />
         </button>
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white drop-shadow-xs">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white drop-shadow-xs truncate">
             {title}
           </h1>
           {subtitle && (
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-300 mt-0.5">
+            <p className="hidden sm:block text-xs font-medium text-slate-500 dark:text-slate-300 mt-0.5">
               {subtitle}
             </p>
           )}
@@ -74,12 +75,14 @@ export const Header = ({
       </div>
 
       {/* Right: Actions Bar */}
-      <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+      <div className="contents sm:flex sm:items-center sm:gap-3 sm:flex-wrap sm:order-2">
+        {/* Quebra de linha só no celular: ícones em cima; cotação e tema embaixo */}
+        <div className="order-5 basis-full h-0 sm:hidden" aria-hidden="true" />
         {/* USD / BRL Rate Pill Chip */}
         <div
           onClick={isRateLoading ? undefined : onRefreshRate}
           title={isRateLoading ? 'Atualizando cotação...' : 'Cotação USD / BRL em tempo real (Clique para atualizar)'}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 shadow-xs text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-white/20 dark:hover:bg-white/[0.08] transition-all ${isRateLoading ? 'cursor-wait opacity-70' : 'cursor-pointer'}`}
+          className={`order-6 sm:order-none mr-auto sm:mr-0 flex items-center gap-2 px-3.5 py-2 sm:py-1.5 rounded-full bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 shadow-xs text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-white/20 dark:hover:bg-white/[0.08] transition-all ${isRateLoading ? 'cursor-wait opacity-70' : 'cursor-pointer'}`}
         >
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
           <span>1 USD = {formatBRL(exchangeRate)}</span>
@@ -89,7 +92,8 @@ export const Header = ({
         {/* Search Pill Button */}
         <button
           onClick={onOpenSearch}
-          className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/20 dark:hover:bg-white/[0.08] shadow-xs transition-all text-xs font-medium"
+          aria-label="Buscar"
+          className="order-2 sm:order-none flex items-center gap-2 p-2.5 sm:px-3.5 sm:py-2 rounded-full bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/20 dark:hover:bg-white/[0.08] shadow-xs transition-all text-xs font-medium"
         >
           <Search className="w-4 h-4 text-slate-400 dark:text-slate-300" />
           <span className="hidden sm:inline">Buscar por IMEI, Pedido...</span>
@@ -99,7 +103,7 @@ export const Header = ({
         </button>
 
         {/* Notifications Bell */}
-        <div className="relative" ref={notifMenuRef}>
+        <div className="order-3 sm:order-none relative" ref={notifMenuRef}>
           <button
             onClick={() => setShowNotifications(!showNotifications)}
             className="p-2.5 rounded-full bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white dark:hover:bg-white/[0.08] dark:hover:border-white/20 shadow-xs transition-all relative"
@@ -113,7 +117,7 @@ export const Header = ({
 
           {/* Notifications Dropdown */}
           {showNotifications && (
-            <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-[#0D121D]/95 dark:backdrop-blur-2xl border border-slate-200 dark:border-white/15 rounded-3xl shadow-modal dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] z-50 p-4 animate-fade-in">
+            <div className="absolute right-0 mt-2 w-[min(20rem,calc(100vw-1.5rem))] bg-white dark:bg-[#0D121D]/95 dark:backdrop-blur-2xl border border-slate-200 dark:border-white/15 rounded-3xl shadow-modal dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] z-50 p-4 animate-fade-in">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-white/10">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Notificações & Alertas</h4>
                 <Badge variant="mint" size="sm">{pendingAlerts.length} ativos</Badge>
@@ -140,10 +144,10 @@ export const Header = ({
         </div>
 
         {/* Theme Toggle (Light, Dark, System) */}
-        <div className="flex items-center p-1 bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 rounded-full shadow-xs">
+        <div className="order-7 sm:order-none flex items-center p-1 bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 rounded-full shadow-xs">
           <button
             onClick={() => onThemeChange('light')}
-            className={`p-1.5 rounded-full transition-colors ${
+            className={`p-2 sm:p-1.5 rounded-full transition-colors ${
               theme === 'light' ? 'bg-[#EDE8F8] text-[#6845B2] font-bold' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
             }`}
             title="Modo Claro"
@@ -152,7 +156,7 @@ export const Header = ({
           </button>
           <button
             onClick={() => onThemeChange('dark')}
-            className={`p-1.5 rounded-full transition-colors ${
+            className={`p-2 sm:p-1.5 rounded-full transition-colors ${
               theme === 'dark' ? 'bg-white/15 text-cyan-300 font-bold shadow-xs' : 'text-slate-400 hover:text-slate-200'
             }`}
             title="Modo Escuro"
@@ -161,7 +165,7 @@ export const Header = ({
           </button>
           <button
             onClick={() => onThemeChange('system')}
-            className={`p-1.5 rounded-full transition-colors ${
+            className={`p-2 sm:p-1.5 rounded-full transition-colors ${
               theme === 'system' ? 'bg-slate-200 dark:bg-white/15 text-slate-900 dark:text-white font-bold' : 'text-slate-400 hover:text-slate-200'
             }`}
             title="Acompanhar Sistema"
@@ -171,17 +175,18 @@ export const Header = ({
         </div>
 
         {/* User Profile Pill Container */}
-        <div className="relative" ref={userMenuRef}>
+        <div className="order-4 sm:order-none relative" ref={userMenuRef}>
           <button 
             onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex items-center gap-2.5 pl-1.5 pr-3.5 py-1 rounded-full bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 shadow-xs cursor-pointer hover:border-slate-300 dark:hover:border-white/20 dark:hover:bg-white/[0.08] transition-all"
+            aria-label="Menu do usuário"
+            className="flex items-center gap-2.5 pl-1.5 pr-1.5 sm:pr-3.5 py-1 rounded-full bg-white dark:bg-white/[0.05] dark:backdrop-blur-md border border-slate-200 dark:border-white/10 shadow-xs cursor-pointer hover:border-slate-300 dark:hover:border-white/20 dark:hover:bg-white/[0.08] transition-all"
             aria-expanded={showUserMenu}
           >
             {/* Avatar circle with initials */}
             <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-amber-300 via-rose-300 to-purple-400 flex items-center justify-center text-xs font-black text-slate-900 shadow-inner">
               {userInitials}
             </div>
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
               <span className="max-w-[110px] truncate">{userName}</span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </div>

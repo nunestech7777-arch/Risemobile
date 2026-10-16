@@ -21,11 +21,19 @@ import { Modal, Drawer } from '../ui/Modal';
 import { ConfirmDialog, EmptyState } from '../ui/EmptyState';
 import { FinalizeSaleModal } from './FinalizeSaleModal';
 import { RegisterReturnModal } from './RegisterReturnModal';
+import { SalesMetricCards } from './SalesMetricCards';
 import { formatUSD, formatImei, formatColor, formatBattery, formatDate, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
 import { IPHONE_MODELS } from '../../lib/deviceOptions';
 import { allocateDevicesForItems, colorKey, getAvailableColors, getRemainingForItem } from '../../lib/saleAllocation';
 
 const STORAGE_OPTIONS = ['64GB', '128GB', '256GB', '512GB', '1TB'];
+
+// Venda concluída com aparelhos ainda vinculados: eles já foram entregues ao cliente.
+// Reservas/separações (nunca saíram da loja) voltam ao estoque sem conferência.
+const isDeliveredSale = (sale) =>
+  Boolean(sale) &&
+  (sale.status === 'Finalizado' || sale.status === 'Parcialmente Devolvida') &&
+  (sale.allocated_devices?.length || 0) > 0;
 
 export const SalesModule = ({
   orders = [],
@@ -33,6 +41,9 @@ export const SalesModule = ({
   devices = [],
   grades = [],
   exchangeRate = 5.48,
+  user = null,
+  ordersLoadError = '',
+  onReloadData,
   onReserveOrder,
   onCancelOrder,
   onDeleteOrder,
@@ -77,6 +88,8 @@ export const SalesModule = ({
 
   // Diálogo de Exclusão de Venda
   const [saleToDelete, setSaleToDelete] = useState(null);
+  // Venda finalizada = aparelhos entregues ao cliente: só voltam ao estoque com conferência física
+  const [deleteReturnConfirmed, setDeleteReturnConfirmed] = useState(false);
   const [isDeletingOrder, setIsDeletingOrder] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
@@ -326,6 +339,15 @@ export const SalesModule = ({
           Nova Venda
         </Button>
       </div>
+
+      {/* 3 Cards Independentes: Aparelhos Vendidos, Faturamento Total, Lucro Total com Mini Calendário */}
+      <SalesMetricCards
+        orders={orders}
+        exchangeRate={exchangeRate}
+        ordersLoadError={ordersLoadError}
+        user={user}
+        onReloadData={onReloadData}
+      />
 
       {/* Filters Bar */}
       <Card className="p-4">
@@ -879,6 +901,7 @@ export const SalesModule = ({
                 size="sm"
                 onClick={() => {
                   setDeleteError('');
+                  setDeleteReturnConfirmed(false);
                   setSaleToDelete(selectedSale);
                   setSelectedSale(null);
                 }}
@@ -930,13 +953,39 @@ export const SalesModule = ({
           message={
             deleteError
               ? deleteError
-              : `Tem certeza que deseja excluir a venda ${saleToDelete.order_number}? Os aparelhos ainda vinculados voltarão automaticamente para Disponível no estoque. Pagamentos, parcelas e devoluções desta venda serão apagados. Esta ação não pode ser desfeita.`
+              : isDeliveredSale(saleToDelete)
+                ? `Tem certeza que deseja excluir a venda ${saleToDelete.order_number}? Ela já foi concluída: os aparelhos abaixo só voltarão para Disponível (mesmo IMEI, sem novo cadastro) após você confirmar que retornaram à loja e foram conferidos. Pagamentos, parcelas e devoluções desta venda serão apagados. Esta ação não pode ser desfeita.`
+                : `Tem certeza que deseja excluir a venda ${saleToDelete.order_number}? Os aparelhos ainda vinculados nunca saíram da loja e voltarão automaticamente para Disponível no estoque. Pagamentos, parcelas e devoluções desta venda serão apagados. Esta ação não pode ser desfeita.`
           }
           confirmText="Sim, Excluir Venda"
           cancelText="Não, Manter"
           variant="danger"
           loading={isDeletingOrder}
-        />
+          confirmDisabled={isDeliveredSale(saleToDelete) && !deleteReturnConfirmed}
+        >
+          {isDeliveredSale(saleToDelete) && (
+            <div className="text-left mb-6 space-y-3">
+              <ul className="max-h-32 overflow-y-auto custom-scrollbar rounded-xl border border-slate-200 dark:border-white/10 divide-y divide-slate-100 dark:divide-white/5 text-xs">
+                {saleToDelete.allocated_devices.map(dev => (
+                  <li key={dev.device_id} className="px-3 py-1.5 flex justify-between gap-2 text-slate-700 dark:text-slate-300">
+                    <span className="font-semibold">{dev.model} {dev.storage}</span>
+                    <span className="font-mono text-slate-500 dark:text-slate-400">{dev.imei || 'Sem IMEI'}</span>
+                  </li>
+                ))}
+              </ul>
+              <label className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={deleteReturnConfirmed}
+                  onChange={(e) => setDeleteReturnConfirmed(e.target.checked)}
+                  disabled={isDeletingOrder}
+                />
+                <span>Confirmo que estes aparelhos retornaram fisicamente à loja e foram conferidos pelo IMEI.</span>
+              </label>
+            </div>
+          )}
+        </ConfirmDialog>
       )}
 
       {/* MODAL DE FINALIZAÇÃO DE VENDA (pagamento + parcelamento em uma única etapa) */}

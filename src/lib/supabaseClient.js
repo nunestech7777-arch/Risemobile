@@ -17,11 +17,55 @@ const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.
 const supabaseUrl = env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || '';
 
-export const isLiveSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey && supabaseUrl.includes('supabase.co'));
+const supabaseEnvConfigured = Boolean(supabaseUrl && supabaseAnonKey && supabaseUrl.includes('supabase.co'));
 
-export const supabase = isLiveSupabaseConfigured 
+// -----------------------------------------------------------------------------
+// Conta demo: enquanto ativa, TODO acesso a dados usa o motor local (nunca o
+// Supabase), com chaves de armazenamento próprias ("demo:") para não misturar
+// com dados locais reais. `isLiveSupabaseConfigured` é um binding vivo: os
+// módulos que o importam enxergam a troca sem recarregar a página.
+// -----------------------------------------------------------------------------
+const DEMO_FLAG_KEY = 'risemobile_demo_mode';
+const DEMO_KEY_PREFIX = 'demo:';
+
+// A marca só vale enquanto existir uma sessão demo válida neste navegador; uma marca
+// solta (sessão expirada/removida) nunca pode deixar um login real preso ao motor local.
+const readDemoFlag = () => {
+  try {
+    if (typeof localStorage === 'undefined' || localStorage.getItem(DEMO_FLAG_KEY) !== 'true') return false;
+    const session = JSON.parse(localStorage.getItem('risemobile_auth_session') || 'null');
+    const valid = Boolean(session?.user?.user_metadata?.is_demo) && session.expires_at > Math.floor(Date.now() / 1000);
+    if (!valid) localStorage.removeItem(DEMO_FLAG_KEY);
+    return valid;
+  } catch {
+    return false;
+  }
+};
+
+let demoModeActive = readDemoFlag();
+
+export let isLiveSupabaseConfigured = supabaseEnvConfigured && !demoModeActive;
+
+export const supabase = supabaseEnvConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
+
+export const isDemoMode = () => demoModeActive;
+
+export const setDemoMode = (active) => {
+  demoModeActive = Boolean(active);
+  isLiveSupabaseConfigured = supabaseEnvConfigured && !demoModeActive;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (demoModeActive) localStorage.setItem(DEMO_FLAG_KEY, 'true');
+      else localStorage.removeItem(DEMO_FLAG_KEY);
+    }
+  } catch {
+    // Sem armazenamento: o modo vale apenas nesta execução
+  }
+};
+
+const storageKey = (key) => (demoModeActive ? `${DEMO_KEY_PREFIX}${key}` : key);
 
 // Local Storage Keys
 export const STORAGE_KEYS = {
@@ -45,10 +89,10 @@ const memoryStorage = {};
 const getStored = (key, fallback) => {
   try {
     if (typeof localStorage !== 'undefined') {
-      const item = localStorage.getItem(key);
+      const item = localStorage.getItem(storageKey(key));
       return item ? JSON.parse(item) : fallback;
     }
-    return memoryStorage[key] !== undefined ? memoryStorage[key] : fallback;
+    return memoryStorage[storageKey(key)] !== undefined ? memoryStorage[storageKey(key)] : fallback;
   } catch {
     return fallback;
   }
@@ -57,11 +101,29 @@ const getStored = (key, fallback) => {
 const setStored = (key, val) => {
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, JSON.stringify(val));
+      localStorage.setItem(storageKey(key), JSON.stringify(val));
     }
-    memoryStorage[key] = val;
+    memoryStorage[storageKey(key)] = val;
   } catch (err) {
     console.error('Storage error:', err);
+  }
+};
+
+// Acesso mínimo ao armazenamento local para a conta demo (semeadura e limpeza)
+export const demoStorage = {
+  get: getStored,
+  set: setStored,
+  clear() {
+    Object.keys(memoryStorage).forEach((k) => { if (k.startsWith(DEMO_KEY_PREFIX)) delete memoryStorage[k]; });
+    try {
+      if (typeof localStorage !== 'undefined') {
+        Object.keys(localStorage)
+          .filter((k) => k.startsWith(DEMO_KEY_PREFIX))
+          .forEach((k) => localStorage.removeItem(k));
+      }
+    } catch {
+      // Sem armazenamento: nada a limpar
+    }
   }
 };
 
@@ -1466,7 +1528,9 @@ export const DataService = {
           sale_returns(id, reason, notes, created_at, created_by, total_amount_usd, total_commission_usd, sale_return_items(device_id, imei, model, storage, original_sale_price_usd))
         `)
         .order('created_at', { ascending: false });
-      if (!error && data) return data.map(normalizeOrderFromSupabase);
+      // Falha no Supabase NUNCA cai para cópia local: vendas antigas do navegador apareceriam como reais
+      if (error || !data) throw new Error(`Erro ao carregar vendas: ${error?.message || 'resposta vazia'}`);
+      return data.map(normalizeOrderFromSupabase);
     }
     return getStored(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
   },

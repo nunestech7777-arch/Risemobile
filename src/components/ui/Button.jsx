@@ -16,10 +16,10 @@ export const Button = ({
   const baseStyles = 'inline-flex items-center justify-center font-bold tracking-tight transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed dark:disabled:text-slate-400 active:scale-[0.98] select-none';
 
   const sizes = {
-    sm: 'text-xs px-3 py-1.5 rounded-md gap-1.5',
-    md: 'text-sm px-4 py-2 rounded-lg gap-2',
-    lg: 'text-base px-5 py-2.5 rounded-lg gap-2.5',
-    icon: 'p-2 rounded-lg'
+    sm: 'text-xs px-3 py-1.5 rounded-md gap-1.5 max-md:min-h-10',
+    md: 'text-sm px-4 py-2 rounded-lg gap-2 max-md:min-h-11',
+    lg: 'text-base px-5 py-2.5 rounded-lg gap-2.5 max-md:min-h-12',
+    icon: 'p-2 rounded-lg max-md:min-h-10 max-md:min-w-10'
   };
 
   const variants = {

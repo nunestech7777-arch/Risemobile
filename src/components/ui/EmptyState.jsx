@@ -36,7 +36,9 @@ export const ConfirmDialog = ({
   confirmText = 'Confirmar',
   cancelText = 'Cancelar',
   variant = 'danger',
-  loading = false
+  loading = false,
+  confirmDisabled = false,
+  children
 }) => {
   return (
     <Modal isOpen={isOpen} onClose={onClose} maxWidth="max-w-md" showClose={false}>
@@ -46,6 +48,7 @@ export const ConfirmDialog = ({
         </div>
         <h3 className="text-lg font-bold text-slate-900 dark:text-white">{title}</h3>
         <p className="text-xs text-slate-500 dark:text-slate-300 mt-2 mb-6">{message}</p>
+        {children}
         <div className="flex items-center justify-center gap-3">
           <Button variant="outline" size="sm" onClick={onClose} disabled={loading}>
             {cancelText}
@@ -55,6 +58,7 @@ export const ConfirmDialog = ({
             size="sm" 
             onClick={onConfirm} 
             loading={loading}
+            disabled={confirmDisabled}
           >
             {confirmText}
           </Button>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Plus,
   ChevronRight,
@@ -9,15 +9,65 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { formatUSD, formatBRL, formatDate, formatImei, getStatusBadge } from '../../lib/formatters';
+import { summarizeSalesPeriod } from '../../lib/salesPeriod';
+
+// Área útil do gráfico dentro do viewBox 0 0 500 120
+const CHART_W = 500;
+const CHART_TOP = 10;
+const CHART_BOTTOM = 110;
 
 export const DashboardOverview = ({ 
   devices = [], 
   orders = [], 
   retailers = [], 
   installments = [],
-  onNavigate 
+  onNavigate,
+  ordersLoadError = '',
+  onRetryLoad
 }) => {
   const [timeFilter, setTimeFilter] = useState('7D');
+  const [hoverIndex, setHoverIndex] = useState(null);
+  const chartRef = useRef(null);
+
+  // Card "Faturamento & Vendas": número, lucro, gráfico e tooltip saem do MESMO conjunto de vendas do período
+  const period = useMemo(() => summarizeSalesPeriod(orders, timeFilter), [orders, timeFilter]);
+  const chartCoords = useMemo(() => {
+    const pts = period.points;
+    if (pts.length === 0) return [];
+    const max = pts[pts.length - 1].cumulative > 0 ? Math.max(...pts.map(p => p.cumulative)) : 1;
+    const step = pts.length > 1 ? CHART_W / (pts.length - 1) : 0;
+    return pts.map((p, i) => ({
+      ...p,
+      x: pts.length > 1 ? i * step : CHART_W,
+      y: CHART_BOTTOM - (Math.max(0, p.cumulative) / max) * (CHART_BOTTOM - CHART_TOP)
+    }));
+  }, [period]);
+  const linePath = chartCoords.length === 0 ? '' : chartCoords.length === 1
+    ? `M 0 ${chartCoords[0].y} L ${CHART_W} ${chartCoords[0].y}`
+    : chartCoords.reduce((d, p, i) => {
+        if (i === 0) return `M ${p.x} ${p.y}`;
+        const prev = chartCoords[i - 1];
+        const midX = (prev.x + p.x) / 2;
+        return `${d} C ${midX} ${prev.y} ${midX} ${p.y} ${p.x} ${p.y}`;
+      }, '');
+  const areaPath = linePath ? `${linePath} L ${CHART_W} 120 L 0 120 Z` : '';
+  const activePoint = chartCoords.length
+    ? chartCoords[hoverIndex !== null && hoverIndex < chartCoords.length ? hoverIndex : chartCoords.length - 1]
+    : null;
+
+  const handleChartHover = (e) => {
+    const svg = chartRef.current;
+    if (!svg || chartCoords.length === 0) return;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const { x } = pt.matrixTransform(svg.getScreenCTM().inverse());
+    let nearest = 0;
+    chartCoords.forEach((c, i) => {
+      if (Math.abs(c.x - x) < Math.abs(chartCoords[nearest].x - x)) nearest = i;
+    });
+    setHoverIndex(nearest);
+  };
 
   // Cálculos de métricas do sistema
   const availableDevices = devices.filter(d => d.status === 'Disponível');
@@ -27,6 +77,7 @@ export const DashboardOverview = ({
   const totalStockValueUSD = availableDevices.reduce((sum, d) => sum + (d.cost_price_usd || 0), 0);
   const totalSuggestedValueUSD = availableDevices.reduce((sum, d) => sum + (d.suggested_price_usd || 0), 0);
 
+  // Demais cards: acumulado de todas as vendas concluídas (não usam o seletor de período)
   const completedOrders = orders.filter(o => o.status === 'Finalizado' || o.status === 'Parcialmente Devolvida' || o.status === 'Totalmente Devolvida');
   // total_amount_usd / total_commission_usd são o bruto histórico; subtrai o que foi devolvido
   // para refletir o faturamento e a comissão realmente efetivos (líquidos de devolução).
@@ -49,12 +100,31 @@ export const DashboardOverview = ({
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Faturamento & Vendas</span>
-                <div className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mt-1">
-                  {formatUSD(totalRevenueUSD)}
-                </div>
-                <div className="flex items-center gap-2 mt-1 text-xs font-bold text-slate-800 dark:text-slate-200">
-                  <span className="text-slate-500 dark:text-slate-300 font-normal">Lucro: {formatUSD(totalProfitUSD)}</span>
-                </div>
+                {ordersLoadError ? (
+                  <>
+                    <div className="text-xl sm:text-2xl font-extrabold tracking-tight text-rose-600 dark:text-rose-400 mt-1">
+                      Erro ao carregar vendas
+                    </div>
+                    <div className="flex items-center gap-2 mt-1 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => onRetryLoad && onRetryLoad()}
+                        className="font-bold underline text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white"
+                      >
+                        Tentar novamente
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mt-1">
+                      {formatUSD(period.revenue)}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1 text-xs font-bold text-slate-800 dark:text-slate-200">
+                      <span className="text-slate-500 dark:text-slate-300 font-normal">Lucro: {formatUSD(period.profit)}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Seletor de Período em Português (24H, 7D, 30D, 1A, Tudo) */}
@@ -68,7 +138,7 @@ export const DashboardOverview = ({
                 ].map((tf) => (
                   <button
                     key={tf.id}
-                    onClick={() => setTimeFilter(tf.id)}
+                    onClick={() => { setTimeFilter(tf.id); setHoverIndex(null); }}
                     className={`px-2.5 py-1 rounded-full transition-all ${
                       timeFilter === tf.id 
                         ? 'bg-white dark:bg-white/20 text-slate-900 dark:text-white shadow-xs font-bold' 
@@ -82,62 +152,72 @@ export const DashboardOverview = ({
             </div>
           </div>
 
-          {/* SVG Smooth Line Chart with Ambient Cyan/Blue Glow in Dark Mode */}
+          {/* Gráfico acumulado do período: mesmas vendas do número acima (último ponto = total) */}
           <div className="mt-8 relative h-36 w-full flex items-end">
-            <svg viewBox="0 0 500 120" className="w-full h-full overflow-visible">
-              <defs>
-                <linearGradient id="chartGradientMono" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#0F172A" stopOpacity="0.08" />
-                  <stop offset="100%" stopColor="#0F172A" stopOpacity="0.0" />
-                </linearGradient>
-                <linearGradient id="chartGradientDark" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.18" />
-                  <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.0" />
-                </linearGradient>
-              </defs>
+            {ordersLoadError || chartCoords.length === 0 ? (
+              <div className="w-full h-full flex items-center justify-center text-xs font-medium text-slate-400 dark:text-slate-400 border-b border-dashed border-slate-200 dark:border-white/10">
+                {ordersLoadError ? 'Não foi possível carregar as vendas deste período.' : 'Nenhuma venda registrada neste período.'}
+              </div>
+            ) : (
+              <>
+                <svg
+                  ref={chartRef}
+                  viewBox="0 0 500 120"
+                  className="w-full h-full overflow-visible"
+                  onMouseMove={handleChartHover}
+                  onMouseLeave={() => setHoverIndex(null)}
+                >
+                  <defs>
+                    <linearGradient id="chartGradientMono" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#0F172A" stopOpacity="0.08" />
+                      <stop offset="100%" stopColor="#0F172A" stopOpacity="0.0" />
+                    </linearGradient>
+                    <linearGradient id="chartGradientDark" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.18" />
+                      <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.0" />
+                    </linearGradient>
+                  </defs>
 
-              {/* Light Mode Area Fill */}
-              <path
-                d="M 0 100 Q 80 85 150 70 T 300 45 T 420 20 T 500 10 L 500 120 L 0 120 Z"
-                fill="url(#chartGradientMono)"
-                className="block dark:hidden"
-              />
-              {/* Dark Mode Area Fill */}
-              <path
-                d="M 0 100 Q 80 85 150 70 T 300 45 T 420 20 T 500 10 L 500 120 L 0 120 Z"
-                fill="url(#chartGradientDark)"
-                className="hidden dark:block"
-              />
+                  {/* Light Mode Area Fill */}
+                  <path d={areaPath} fill="url(#chartGradientMono)" className="block dark:hidden" />
+                  {/* Dark Mode Area Fill */}
+                  <path d={areaPath} fill="url(#chartGradientDark)" className="hidden dark:block" />
 
-              {/* Stroke Line - Light Mode */}
-              <path
-                d="M 0 100 Q 80 85 150 70 T 300 45 T 420 20 T 500 10"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-                className="text-slate-900 block dark:hidden"
-              />
-              {/* Stroke Line - Dark Mode (Silver/White Metallic Glow) */}
-              <path
-                d="M 0 100 Q 80 85 150 70 T 300 45 T 420 20 T 500 10"
-                fill="none"
-                stroke="#FFFFFF"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                className="hidden dark:block drop-shadow-[0_0_6px_rgba(255,255,255,0.4)]"
-              />
+                  {/* Stroke Line - Light Mode */}
+                  <path
+                    d={linePath}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3.5"
+                    strokeLinecap="round"
+                    className="text-slate-900 block dark:hidden"
+                  />
+                  {/* Stroke Line - Dark Mode (Silver/White Metallic Glow) */}
+                  <path
+                    d={linePath}
+                    fill="none"
+                    stroke="#FFFFFF"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    className="hidden dark:block drop-shadow-[0_0_6px_rgba(255,255,255,0.4)]"
+                  />
 
-              {/* Highlight Pin / Dot */}
-              <circle cx="420" cy="20" r="5" className="fill-slate-900 stroke-white block dark:hidden" strokeWidth="2.5" />
-              <circle cx="420" cy="20" r="5.5" className="fill-white stroke-slate-800 hidden dark:block drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]" strokeWidth="2.5" />
-            </svg>
+                  {/* Highlight Pin / Dot (ponto sob o cursor, ou o último ponto) */}
+                  <circle cx={activePoint.x} cy={activePoint.y} r="5" className="fill-slate-900 stroke-white block dark:hidden" strokeWidth="2.5" />
+                  <circle cx={activePoint.x} cy={activePoint.y} r="5.5" className="fill-white stroke-slate-800 hidden dark:block drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]" strokeWidth="2.5" />
+                </svg>
 
-            {/* Float Tooltip Badge on Chart */}
-            <div className="absolute right-12 top-2 bg-[#111418] dark:bg-[#0D121D]/90 dark:backdrop-blur-md text-white text-[11px] font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 border border-slate-700 dark:border-white/20 dark:shadow-[0_4px_16px_rgba(0,0,0,0.5)]">
-              <span className="w-1.5 h-1.5 rounded-full bg-white dark:bg-slate-200 animate-pulse"></span>
-              <span>{formatUSD(totalRevenueUSD)}</span>
-            </div>
+                {/* Float Tooltip Badge on Chart */}
+                <div className="absolute right-12 top-2 bg-[#111418] dark:bg-[#0D121D]/90 dark:backdrop-blur-md text-white text-[11px] font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 border border-slate-700 dark:border-white/20 dark:shadow-[0_4px_16px_rgba(0,0,0,0.5)] pointer-events-none">
+                  <span className="w-1.5 h-1.5 rounded-full bg-white dark:bg-slate-200 animate-pulse"></span>
+                  <span>
+                    {hoverIndex !== null
+                      ? `${activePoint.label}: ${formatUSD(activePoint.value)} · acum. ${formatUSD(activePoint.cumulative)}`
+                      : formatUSD(period.revenue)}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </Card>
 

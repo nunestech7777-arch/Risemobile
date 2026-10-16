@@ -34,3 +34,17 @@ export const getDeviceDeleteBlock = (device, commercialDeviceIds = new Set()) =>
   }
   return null;
 };
+
+// Estoque comercial: somente aparelhos que ainda podem ser vendidos (Disponível) ou já estão
+// prometidos a um pedido (Reservado). Vendido, Retirado por ajuste e Removido ficam de fora —
+// continuam no banco e no histórico de vendas, mas não são estoque.
+export const COMMERCIAL_STOCK_STATUSES = ['Disponível', 'Reservado'];
+
+export const isInCommercialStock = (device) =>
+  Boolean(device) && !device.deleted_at && COMMERCIAL_STOCK_STATUSES.includes(device.status);
+
+// Chave de agrupamento da tabela "Estoque Agrupado por Configuração" (Modelo + Armazenamento + Grade).
+export const getStockGroupKey = (device, grades = []) => {
+  const gradeName = grades.find(g => g.id === device.grade_id)?.name || 'A++';
+  return `${device.model}__${device.storage}__${gradeName}`;
+};

@@ -607,12 +607,12 @@ export const CommissionsModule = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
           {/* Sub-tab Pill Switcher */}
           <div className="flex items-center p-1 rounded-2xl bg-slate-100 dark:bg-white/[0.06] border border-slate-200/80 dark:border-white/10 text-xs">
             <button
               onClick={() => setActiveSubTab('referrals')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-bold transition-all ${
+              className={`flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-bold transition-all ${
                 activeSubTab === 'referrals'
                   ? 'bg-white dark:bg-[#111827] text-slate-950 dark:text-white shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -623,7 +623,7 @@ export const CommissionsModule = ({
             </button>
             <button
               onClick={() => setActiveSubTab('agent_logins')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-bold transition-all ${
+              className={`flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-bold transition-all ${
                 activeSubTab === 'agent_logins'
                   ? 'bg-white dark:bg-[#111827] text-slate-950 dark:text-white shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -643,6 +643,7 @@ export const CommissionsModule = ({
             <Button 
               variant="primary" 
               size="md" 
+              className="w-full sm:w-auto"
               onClick={handleOpenCreateModal} 
               icon={Plus}
             >
@@ -652,6 +653,7 @@ export const CommissionsModule = ({
             <Button
               variant="primary"
               size="md"
+              className="w-full sm:w-auto"
               onClick={handleOpenCreateAgentModal}
               icon={UserPlus}
             >
@@ -717,7 +719,7 @@ export const CommissionsModule = ({
               <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
                 {activeReferralsCount} <span className="text-sm font-semibold text-slate-500 dark:text-slate-300">lojistas</span>
               </div>
-              <span className="text-[11px] text-slate-500 dark:text-slate-300 mt-1">Relações indicador $\rightarrow$ lojista</span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-300 mt-1">Relações indicador → lojista</span>
             </div>
           </div>
 

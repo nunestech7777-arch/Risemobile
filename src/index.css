@@ -280,3 +280,108 @@
 .animate-pulse-subtle {
   animation: pulseSubtle 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+/* ==========================================================================
+   Celular / PWA
+   ========================================================================== */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Como app instalado, evita o "puxar para atualizar" apagar uma venda em andamento */
+@media (display-mode: standalone) {
+  html, body {
+    overscroll-behavior-y: none;
+  }
+}
+
+@media (max-width: 767px) {
+  /* iOS dá zoom automático em campo com fonte menor que 16px */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Celular e tablet em pé: tabelas viram cartões */
+@media (max-width: 1023px) {
+  /* Tabelas viram cartões: cada linha é um cartão com "rótulo: valor".
+     Os rótulos (data-label) são preenchidos por src/lib/responsiveTables.js.
+     Para manter uma tabela rolando na horizontal, use a classe no-cards. */
+  table.rt-cards,
+  table.rt-cards tbody {
+    display: block;
+    width: 100%;
+  }
+  table.rt-cards thead {
+    display: none;
+  }
+  table.rt-cards tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.35rem 0.75rem;
+    padding: 0.85rem 0.25rem;
+  }
+  table.rt-cards td {
+    display: block;
+    min-width: 0;
+    padding: 0 0.5rem !important;
+    text-align: left;
+    overflow-wrap: anywhere;
+    border: 0;
+  }
+  table.rt-cards td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 1px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgb(100 116 139);
+  }
+  .dark table.rt-cards td::before {
+    color: rgb(148 163 184);
+  }
+  /* 1ª coluna = título do cartão; coluna sem rótulo (ações) e colspan ocupam a linha inteira */
+  table.rt-cards td:first-child,
+  table.rt-cards td[data-label=''],
+  table.rt-cards td[colspan] {
+    grid-column: 1 / -1;
+  }
+  table.rt-cards td:first-child::before,
+  table.rt-cards td[data-label='']::before,
+  table.rt-cards td:not([data-label])::before {
+    content: none;
+  }
+  table.rt-cards td[data-label=''] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding-top: 0.35rem !important;
+  }
+  table.rt-cards td[data-label=''] > * {
+    min-width: 0;
+  }
+  table.rt-cards td[data-label=''] button,
+  table.rt-cards td[data-label=''] a {
+    white-space: nowrap;
+  }
+  table.rt-cards.no-cards {
+    display: table;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  table.rt-cards tr {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
