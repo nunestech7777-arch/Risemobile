@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { brlToUsd, usdToBrl } from '../../lib/formatters';
 
 export const Input = ({
   label,
@@ -46,32 +45,26 @@ export const Input = ({
   );
 };
 
-// Valor monetário digitado em R$. O formulário continua recebendo e guardando US$ (value/onChange),
-// convertido pela cotação do dia; o texto digitado só é reescrito quando o valor muda por fora.
-const usdToBrlText = (usd) => {
-  if (usd === '' || usd === null || usd === undefined) return '';
-  const num = Number(usd);
-  if (!Number.isFinite(num)) return '';
-  return String(Math.round(usdToBrl(num) * 100) / 100);
-};
+// Valor monetário em R$: o número digitado é exatamente o gravado (sem cotação).
+// O texto digitado só é reescrito quando o valor muda por fora.
+const amountText = (val) => (val === null || val === undefined ? '' : String(val));
 
-const useBrlAmount = (value, onUsdChange) => {
-  const [text, setText] = useState(() => usdToBrlText(value));
+const useBrlAmount = (value, onChange) => {
+  const [text, setText] = useState(() => amountText(value));
   const lastEmitted = useRef(value);
 
   useEffect(() => {
     if (value !== lastEmitted.current) {
       lastEmitted.current = value;
-      setText(usdToBrlText(value));
+      setText(amountText(value));
     }
   }, [value]);
 
   const handleChange = (e) => {
     const raw = e.target.value.replace(/[^0-9.]/g, '');
     setText(raw);
-    const usd = raw === '' ? '' : String(Number(brlToUsd(raw).toFixed(2)));
-    lastEmitted.current = usd;
-    onUsdChange?.(usd);
+    lastEmitted.current = raw;
+    onChange?.(raw);
   };
 
   return [text, handleChange];

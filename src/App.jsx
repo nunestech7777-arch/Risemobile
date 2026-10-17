@@ -21,9 +21,9 @@ import { ShaderBackground } from './components/ui/adisyon-shader';
 
 import { DataService, AuthService } from './lib/supabaseClient';
 import { fetchUsdToBrlRate } from './lib/exchangeRateService';
-import { DEFAULT_USD_BRL_RATE, setUsdToBrlRate } from './lib/formatters';
+import { DEFAULT_USD_BRL_RATE } from './lib/formatters';
 
-// Última cotação obtida da API: evita converter R$ <-> US$ pelo valor padrão se a API falhar ao abrir
+// Última cotação obtida da API (exibição no cabeçalho quando a API falha)
 const RATE_STORAGE_KEY = 'risemobile_last_usd_brl_rate';
 const readStoredRate = () => {
   try {
@@ -64,9 +64,8 @@ export function App() {
   const [retailerReferrals, setRetailerReferrals] = useState([]);
   const [commissionAgents, setCommissionAgents] = useState([]);
   const [settings, setSettings] = useState({});
+  // Cotação apenas informativa (cabeçalho): nunca converte preços, custos ou vendas
   const [exchangeRate, setExchangeRate] = useState(readStoredRate);
-  // Toda a interface mostra e recebe R$ convertendo por esta cotação (o banco continua em US$)
-  setUsdToBrlRate(exchangeRate);
   const [isRateLoading, setIsRateLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 

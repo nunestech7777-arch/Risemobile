@@ -15,7 +15,7 @@ export const FinalizeSaleModal = ({
   onFinalizeSale
 }) => {
   const [paymentsList, setPaymentsList] = useState([
-    { id: '1', amount_usd: '0.00', method: 'PIX', exchange_rate: exchangeRate, notes: '' }
+    { id: '1', amount_usd: '0.00', method: 'PIX', exchange_rate: 1, notes: '' }
   ]);
   const [installmentsCount, setInstallmentsCount] = useState(0);
   const [customInstallments, setCustomInstallments] = useState([]);
@@ -26,7 +26,7 @@ export const FinalizeSaleModal = ({
   useEffect(() => {
     if (order) {
       setPaymentsList([
-        { id: '1', amount_usd: String(order.total_amount_usd || 0), method: 'PIX', exchange_rate: exchangeRate, notes: '' }
+        { id: '1', amount_usd: String(order.total_amount_usd || 0), method: 'PIX', exchange_rate: 1, notes: '' }
       ]);
       setInstallmentsCount(0);
       setCustomInstallments([]);
@@ -35,7 +35,7 @@ export const FinalizeSaleModal = ({
   }, [order?.id, exchangeRate]);
 
   const totalPaidInFormUSD = paymentsList.reduce((sum, p) => sum + (parseFloat(p.amount_usd) || 0), 0);
-  // Valores digitados em R$ viram US$ com frações de centavo: o saldo é sempre em centavos
+  // Saldo sempre em centavos
   const remainingToFinanceUSD = Math.max(0, Math.round(((order?.total_amount_usd || 0) - totalPaidInFormUSD) * 100) / 100);
 
   const handleGenerateInstallments = (count) => {
@@ -73,7 +73,7 @@ export const FinalizeSaleModal = ({
       .filter(p => (parseFloat(p.amount_usd) || 0) > 0)
       .map(p => ({ ...p, amount_usd: String(roundCents(parseFloat(p.amount_usd))) }));
 
-    // Quitação à vista digitada em R$: arredondamento da conversão não pode deixar 1 centavo em aberto
+    // Quitação à vista: arredondamento não pode deixar 1 centavo em aberto
     if (validPayments.length > 0 && customInstallments.length === 0) {
       const total = roundCents(order.total_amount_usd || 0);
       const paid = roundCents(validPayments.reduce((sum, p) => sum + parseFloat(p.amount_usd), 0));
@@ -145,7 +145,7 @@ export const FinalizeSaleModal = ({
               variant="ghost"
               size="sm"
               type="button"
-              onClick={() => setPaymentsList([...paymentsList, { id: `pay-${Date.now()}`, amount_usd: '0.00', method: 'Dólar', exchange_rate: exchangeRate, notes: '' }])}
+              onClick={() => setPaymentsList([...paymentsList, { id: `pay-${Date.now()}`, amount_usd: '0.00', method: 'Dólar', exchange_rate: 1, notes: '' }])}
               icon={Plus}
             >
               Adicionar Forma de Pagamento

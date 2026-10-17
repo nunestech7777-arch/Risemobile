@@ -16,7 +16,11 @@ function assert(condition, message) {
   console.log(`✅ APROVADO: ${message}`);
 }
 
-const RATE = 5.00; // Câmbio de R$ 5,00 por USD para facilitar auditoria matemática
+// O sistema é em R$ e NÃO aplica cotação. As vendas abaixo foram escritas em unidades legadas;
+// toBrl(x) = x * 5 as converte para os valores em R$ que o banco guarda. RATE é passado só para
+// provar que a cotação é ignorada.
+const RATE = 5.00;
+const toBrl = (v) => (v === null || v === undefined ? v : v * 5);
 
 // Helper para criar vendas simuladas no formato do Supabase
 const createSale = ({
@@ -33,11 +37,11 @@ const createSale = ({
   status,
   finalized_at: finalizedAt,
   created_at: finalizedAt,
-  total_amount_usd: totalAmountUSD,
-  returned_amount_usd: returnedAmountUSD,
-  total_profit_usd: totalProfitUSD,
-  allocated_devices: allocatedDevices,
-  machine_fee_usd: machineFeeUSD
+  total_amount_usd: toBrl(totalAmountUSD),
+  returned_amount_usd: toBrl(returnedAmountUSD),
+  total_profit_usd: toBrl(totalProfitUSD),
+  allocated_devices: allocatedDevices.map(d => ({ ...d, cost_price_usd: toBrl(d.cost_price_usd) })),
+  machine_fee_usd: toBrl(machineFeeUSD)
 });
 
 console.log('\n--- TESTE 1: Selecionar um mês com vendas ---');

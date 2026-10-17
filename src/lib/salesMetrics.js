@@ -78,7 +78,7 @@ export const calculateMonthlySalesMetrics = (orders = [], selectedYear, selected
   let totalRevenueUSD = 0;
   let totalProfitUSD = 0;
 
-  const rate = Number(exchangeRate) || 1;
+  // Valores já estão em R$: a cotação não é aplicada (parâmetro mantido por compatibilidade)
 
   validOrders.forEach((sale) => {
     // 1. Aparelhos Vendidos:
@@ -120,8 +120,8 @@ export const calculateMonthlySalesMetrics = (orders = [], selectedYear, selected
 
   return {
     deviceCount,
-    totalRevenueBRL: totalRevenueUSD * rate,
-    totalProfitBRL: totalProfitUSD * rate,
+    totalRevenueBRL: totalRevenueUSD,
+    totalProfitBRL: totalProfitUSD,
     validSalesCount: validOrders.length
   };
 };

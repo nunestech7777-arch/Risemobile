@@ -1,6 +1,5 @@
 // RISEMOBILE: Excel & CSV Import/Export Utilities
 import * as XLSX from 'xlsx';
-import { brlToUsd } from './formatters.js';
 
 // Valor de planilha: aceita número ou texto ("5.000,00", "R$ 5000", "430.5")
 const parseSheetAmount = (raw) => {
@@ -10,9 +9,6 @@ const parseSheetAmount = (raw) => {
   if (text.includes(',')) text = text.replace(/\./g, '').replace(',', '.');
   return parseFloat(text);
 };
-
-// Colunas com "USD" / "US$" (modelo antigo) já estão em dólar; as demais são R$ e viram US$ pela cotação do dia
-const isUsdHeader = (key) => /\busd\b|us\$/i.test(key || '');
 
 /**
  * Exporta array de objetos para arquivo Excel (.xlsx) ou CSV (.csv)
@@ -113,11 +109,10 @@ export const parseStockExcelFile = async (file) => {
             const key = findKey(keys);
             return key === undefined ? '' : row[key];
           };
-          const toUsd = (keys) => {
+          // Valores em R$, gravados como estão (inclusive planilhas antigas com "USD" no cabeçalho)
+          const readAmount = (keys) => {
             const key = findKey(keys);
-            const amount = key === undefined ? NaN : parseSheetAmount(row[key]);
-            if (isNaN(amount)) return NaN;
-            return isUsdHeader(key) ? amount : Number(brlToUsd(amount).toFixed(2));
+            return key === undefined ? NaN : parseSheetAmount(row[key]);
           };
 
           const model = String(findVal(['modelo', 'model']) || '').trim();
@@ -129,8 +124,8 @@ export const parseStockExcelFile = async (file) => {
           const imei = String(findVal(['imei', 'serial', 'numero de serie', 'número de série']) || '').trim().replace(/[^a-zA-Z0-9]/g, '');
           const costKeys = ['custo', 'cost', 'unitario', 'unitário'];
           const priceKeys = ['preco', 'preço', 'sugerido', 'venda', 'price'];
-          const cost = findVal(costKeys) !== '' ? toUsd(costKeys) : 0;
-          const price = findVal(priceKeys) !== '' ? toUsd(priceKeys) : (cost ? cost * 1.25 : 0);
+          const cost = findVal(costKeys) !== '' ? readAmount(costKeys) : 0;
+          const price = findVal(priceKeys) !== '' ? readAmount(priceKeys) : (cost ? cost * 1.25 : 0);
 
           return {
             rowNumber: index + 2, // 1-indexed considerando cabeçalho na linha 1

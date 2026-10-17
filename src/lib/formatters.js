@@ -21,24 +21,15 @@ export const formatBRL = (val) => {
   }).format(num);
 };
 
-// Moeda do sistema: o banco guarda valores em US$ (*_usd) e a tela mostra/recebe R$
-// pela cotação do dia (atualizada pelo App a cada 15 min via setUsdToBrlRate).
+// Moeda do sistema: BRL. As colunas *_usd do banco guardam REAIS (nome histórico);
+// nenhum valor é convertido pela cotação do dólar — ela é apenas informativa no cabeçalho.
 export const DEFAULT_USD_BRL_RATE = 5.48;
-let usdToBrlRate = DEFAULT_USD_BRL_RATE;
-
-export const setUsdToBrlRate = (rate) => {
-  const num = Number(rate);
-  if (Number.isFinite(num) && num > 0) usdToBrlRate = num;
-};
-export const getUsdToBrlRate = () => usdToBrlRate;
-export const usdToBrl = (usd) => (Number(usd) || 0) * usdToBrlRate;
-export const brlToUsd = (brl) => (Number(brl) || 0) / usdToBrlRate;
 
 // Valor em R$ arredondado a centavos (exportações para Excel)
-export const toBrlAmount = (usd) => Math.round(usdToBrl(usd) * 100) / 100;
+export const toBrlAmount = (val) => Math.round((Number(val) || 0) * 100) / 100;
 
-// Valor gravado em US$ exibido em R$ (padrão de toda a interface)
-export const formatMoney = (usd) => formatBRL(usdToBrl(usd));
+// Valor monetário exibido em R$ (padrão de toda a interface)
+export const formatMoney = (val) => formatBRL(val);
 
 export const formatCurrency = (val, currency = 'USD') => {
   return currency === 'BRL' ? formatBRL(val) : formatUSD(val);

@@ -6,7 +6,7 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
-import { formatMoney, formatUSD, formatBRL, formatDate, getStatusBadge } from '../../lib/formatters';
+import { formatMoney, formatBRL, formatDate, getStatusBadge } from '../../lib/formatters';
 
 export const PaymentsModule = ({
   installments = [],
@@ -66,7 +66,6 @@ export const PaymentsModule = ({
         <div className="p-5 rounded-2xl bg-white dark:bg-[#0B1220]/85 dark:backdrop-blur-xl border border-slate-200 dark:border-white/12 text-slate-900 dark:text-white flex flex-col justify-between shadow-sm">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Saldo Total a Receber</span>
           <div className="text-2xl sm:text-3xl font-extrabold mt-2 text-slate-900 dark:text-white">{formatMoney(totalReceivablesUSD)}</div>
-          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1">Base em dólar: {formatUSD(totalReceivablesUSD)}</span>
         </div>
 
         <div className="p-5 rounded-2xl bg-white dark:bg-[#1A0C14]/85 dark:backdrop-blur-xl border border-rose-200 dark:border-rose-500/30 text-rose-900 dark:text-rose-200 flex flex-col justify-between shadow-sm">
@@ -114,7 +113,7 @@ export const PaymentsModule = ({
             Nenhuma parcela encontrada para o filtro selecionado.
           </div>
         ) : (
-          <Table headers={['Pedido', 'Lojista', 'Parcela', 'Vencimento', 'Valor', 'Base (US$)', 'Status', 'Ações']}>
+          <Table headers={['Pedido', 'Lojista', 'Parcela', 'Vencimento', 'Valor', 'Status', 'Ações']}>
             {filteredInstallments.map((inst) => {
               const statusStyle = getStatusBadge(inst.status);
               return (
@@ -133,9 +132,6 @@ export const PaymentsModule = ({
                   </TableCell>
                   <TableCell className="font-extrabold text-slate-900 dark:text-white">
                     {formatMoney(inst.amount_usd)}
-                  </TableCell>
-                  <TableCell className="text-xs text-slate-400">
-                    {formatUSD(inst.amount_usd)}
                   </TableCell>
                   <TableCell>
                     <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusStyle.bg}`}>

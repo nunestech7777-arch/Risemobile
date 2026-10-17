@@ -27,7 +27,7 @@ import { EmptyState } from '../ui/EmptyState';
 import { MetricCard } from '../ui/MetricCard';
 import { RiseMobileLogo } from '../common/RiseMobileLogo';
 import { ShaderBackground } from '../ui/adisyon-shader';
-import { formatMoney, formatUSD, formatDate } from '../../lib/formatters';
+import { formatMoney, formatDate } from '../../lib/formatters';
 import { DataService } from '../../lib/supabaseClient';
 
 export const CommissionAgentPortal = ({
@@ -336,9 +336,8 @@ export const CommissionAgentPortal = ({
           <MetricCard
             variant="default"
             title="Comissão Acumulada"
-            subtitle={`Câmbio R$ ${exchangeRate.toFixed(2)}`}
+            subtitle="Valor em reais"
             value={isLoading ? '...' : formatMoney(portalData?.total_commission_usd || 0)}
-            secondaryValue={`Base em dólar: ${formatUSD(portalData?.total_commission_usd || 0)}`}
             badgeText="A Receber"
             badgeType="neutral"
           />

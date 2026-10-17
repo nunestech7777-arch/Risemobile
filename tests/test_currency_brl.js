@@ -1,7 +1,8 @@
-// TESTE: sistema em R$ — banco em US$, tela/digitação/planilhas em R$ pela cotação do dia
+// TESTE: moeda do sistema = BRL, sem conversão cambial (a cotação do dólar é só informativa)
 import * as XLSX from 'xlsx';
-import { setUsdToBrlRate, getUsdToBrlRate, usdToBrl, brlToUsd, formatMoney, toBrlAmount, formatUSD } from '../src/lib/formatters.js';
+import { formatMoney, toBrlAmount } from '../src/lib/formatters.js';
 import { parseStockExcelFile } from '../src/lib/excelUtils.js';
+import { calculateMonthlySalesMetrics } from '../src/lib/salesMetrics.js';
 
 let total = 0;
 function assert(condition, message) {
@@ -11,24 +12,22 @@ function assert(condition, message) {
 }
 const norm = (s) => s.replace(/\s/g, ' ');
 
-console.log('--- Conversão e formatação ---');
-setUsdToBrlRate(5);
-assert(getUsdToBrlRate() === 5, 'cotação aplicada');
-assert(norm(formatMoney(1000)) === 'R$ 5.000,00', `US$ 1.000 aparece como R$ 5.000,00 (${norm(formatMoney(1000))})`);
-assert(norm(formatMoney(0)) === 'R$ 0,00', 'zero em reais');
-assert(usdToBrl(2) === 10 && brlToUsd(10) === 2, 'ida e volta US$ <-> R$');
-assert(toBrlAmount(193.825) === 969.13, 'exportação arredonda a centavos');
-assert(norm(formatUSD(3308.33)) === 'US$ 3.308,33', `referência em dólar no padrão brasileiro (${norm(formatUSD(3308.33))})`);
+console.log('--- Teste 1: aparelho antigo cadastrado por R$ 2.500,00 ---');
+assert(norm(formatMoney(2500)) === 'R$ 2.500,00', `exibe R$ 2.500,00 (${norm(formatMoney(2500))})`);
+assert(norm(formatMoney(13922.43)) === 'R$ 13.922,43', 'valor gravado aparece exatamente igual, sem multiplicar');
+assert(toBrlAmount(2500.004) === 2500, 'exportação em R$ sem cotação');
 
-setUsdToBrlRate(0);
-setUsdToBrlRate(-3);
-setUsdToBrlRate('abc');
-assert(getUsdToBrlRate() === 5, 'cotação inválida é ignorada (mantém a anterior)');
+console.log('--- Teste 2: alterar a cotação não muda valores ---');
+const orders = [{
+  status: 'Finalizado', finalized_at: '2026-10-10T15:00:00-03:00',
+  total_amount_usd: 8000, returned_amount_usd: 0, total_profit_usd: 1500, allocated_devices: [{}]
+}];
+const m1 = calculateMonthlySalesMetrics(orders, 2026, 10, 5.0);
+const m2 = calculateMonthlySalesMetrics(orders, 2026, 10, 6.2);
+assert(m1.totalRevenueBRL === 8000 && m1.totalProfitBRL === 1500, 'métricas de vendas não multiplicam pela cotação');
+assert(m1.totalRevenueBRL === m2.totalRevenueBRL, 'cotação diferente, mesmo faturamento');
 
-setUsdToBrlRate(5.5);
-assert(norm(formatMoney(100)) === 'R$ 550,00', 'troca automática: nova cotação muda a exibição');
-
-console.log('--- Planilha de importação ---');
+console.log('--- Planilha de importação: valores gravados como digitados ---');
 globalThis.FileReader = class {
   readAsArrayBuffer(blob) {
     blob.arrayBuffer().then(buf => this.onload({ target: { result: buf } }));
@@ -39,17 +38,13 @@ const sheetFile = (rows) => {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Estoque');
   return new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })]);
 };
-
-setUsdToBrlRate(5);
 let rows = await parseStockExcelFile(sheetFile([
   { 'Modelo': 'iPhone 15', 'Armazenamento': '128GB', 'Grade': 'A++', 'Custo Unitário R$ (opcional)': 2500, 'Preço Sugerido R$ (opcional)': '3.000,00' }
 ]));
-assert(rows[0].cost_price_usd === 500, `modelo novo (R$ 2.500) grava US$ 500 (${rows[0].cost_price_usd})`);
-assert(rows[0].suggested_price_usd === 600, `"3.000,00" em R$ vira US$ 600 (${rows[0].suggested_price_usd})`);
-
+assert(rows[0].cost_price_usd === 2500 && rows[0].suggested_price_usd === 3000, 'modelo em R$: 2500 e "3.000,00" gravados como 2500 e 3000');
 rows = await parseStockExcelFile(sheetFile([
-  { 'Modelo': 'iPhone 15', 'Armazenamento': '128GB', 'Grade': 'A++', 'Custo Unitário USD (opcional)': 350, 'Preço Sugerido USD (opcional)': 430 }
+  { 'Modelo': 'iPhone 15', 'Armazenamento': '128GB', 'Grade': 'A++', 'Custo Unitário USD (opcional)': 2000, 'Preço Sugerido USD (opcional)': 2600 }
 ]));
-assert(rows[0].cost_price_usd === 350 && rows[0].suggested_price_usd === 430, 'planilha antiga (colunas USD) continua lida em dólar');
+assert(rows[0].cost_price_usd === 2000 && rows[0].suggested_price_usd === 2600, 'planilha antiga (cabeçalho "USD") também é lida sem conversão');
 
 console.log(`\n🎉 ${total} verificações aprovadas`);
