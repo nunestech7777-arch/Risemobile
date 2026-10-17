@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, ShoppingBag, Users, ArrowRight, X } from 'lucide-react';
 import { IPhoneIcon } from '../common/IPhoneIcon';
-import { formatUSD, formatImei, formatColor, formatBattery, getStatusBadge } from '../../lib/formatters';
+import { formatMoney, formatImei, formatColor, formatBattery, getStatusBadge } from '../../lib/formatters';
 
 export const GlobalSearchModal = ({ 
   isOpen, 
@@ -132,7 +132,7 @@ export const GlobalSearchModal = ({
                         </div>
                         <div className="text-right">
                           <div className="text-sm font-bold text-slate-900 dark:text-white">
-                            {d.suggested_price_usd ? formatUSD(d.suggested_price_usd) : '—'}
+                            {d.suggested_price_usd ? formatMoney(d.suggested_price_usd) : '—'}
                           </div>
                         </div>
                       </div>
@@ -167,7 +167,7 @@ export const GlobalSearchModal = ({
                         </div>
                         <div className="text-right">
                           <div className="text-sm font-bold text-slate-900 dark:text-white">
-                            {formatUSD(o.total_amount_usd)}
+                            {formatMoney(o.total_amount_usd)}
                           </div>
                         </div>
                       </div>

@@ -22,7 +22,7 @@ import { ConfirmDialog, EmptyState } from '../ui/EmptyState';
 import { FinalizeSaleModal } from './FinalizeSaleModal';
 import { RegisterReturnModal } from './RegisterReturnModal';
 import { SalesMetricCards } from './SalesMetricCards';
-import { formatUSD, formatImei, formatColor, formatBattery, formatDate, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
+import { formatMoney, formatImei, formatColor, formatBattery, formatDate, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
 import { IPHONE_MODELS } from '../../lib/deviceOptions';
 import { allocateDevicesForItems, colorKey, getAvailableColors, getRemainingForItem } from '../../lib/saleAllocation';
 
@@ -420,13 +420,13 @@ export const SalesModule = ({
                     </div>
                   </TableCell>
                   <TableCell className="font-semibold text-slate-600 dark:text-slate-300">
-                    {formatUSD(sale.total_amount_usd)}
+                    {formatMoney(sale.total_amount_usd)}
                   </TableCell>
                   <TableCell className={returnedAmount > 0 ? 'font-bold text-rose-500 dark:text-rose-400' : 'text-slate-400'}>
-                    {returnedAmount > 0 ? `-${formatUSD(returnedAmount)}` : '—'}
+                    {returnedAmount > 0 ? `-${formatMoney(returnedAmount)}` : '—'}
                   </TableCell>
                   <TableCell className="font-extrabold text-slate-900 dark:text-white">
-                    {formatUSD(netTotal)}
+                    {formatMoney(netTotal)}
                   </TableCell>
                   <TableCell>
                     <span className={`px-2.5 py-1 rounded-md text-xs font-bold border ${statusStyle.bg}`}>
@@ -531,10 +531,9 @@ export const SalesModule = ({
               <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                 <div className="w-full sm:w-48">
                   <CurrencyInput
-                    label="Preço Unitário (USD)"
+                    label="Preço Unitário (R$)"
                     value={currentItem.unit_price_usd}
                     onChange={(val) => handleCurrentItemChange('unit_price_usd', val)}
-                    currency="USD"
                   />
                 </div>
                 <div className="w-full sm:w-56">
@@ -573,7 +572,7 @@ export const SalesModule = ({
               </h4>
               {saleItems.length > 0 && (
                 <span className="text-xs font-extrabold text-slate-900 dark:text-white">
-                  Total: {totalSaleUnits} un. • {formatUSD(totalSaleAmount)}
+                  Total: {totalSaleUnits} un. • {formatMoney(totalSaleAmount)}
                 </span>
               )}
             </div>
@@ -599,7 +598,7 @@ export const SalesModule = ({
                         {item.color || <span className="text-slate-400 font-normal">Qualquer cor</span>}
                       </TableCell>
                       <TableCell className="font-semibold text-slate-700 dark:text-slate-300">
-                        {formatUSD(item.unit_price_usd)}
+                        {formatMoney(item.unit_price_usd)}
                       </TableCell>
                       <TableCell>
                         <input
@@ -611,7 +610,7 @@ export const SalesModule = ({
                         />
                       </TableCell>
                       <TableCell className="font-extrabold text-slate-900 dark:text-white">
-                        {formatUSD(item.quantity * item.unit_price_usd)}
+                        {formatMoney(item.quantity * item.unit_price_usd)}
                       </TableCell>
                       <TableCell>
                         <button
@@ -685,7 +684,7 @@ export const SalesModule = ({
           {/* AÇÕES DE SUBMISSÃO */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
             <div className="text-xs text-slate-500">
-              Total da Venda: <strong className="text-base text-slate-900 dark:text-white">{formatUSD(totalSaleAmount)}</strong>
+              Total da Venda: <strong className="text-base text-slate-900 dark:text-white">{formatMoney(totalSaleAmount)}</strong>
             </div>
 
             <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
@@ -736,7 +735,7 @@ export const SalesModule = ({
                   {selectedSale.returned_amount_usd > 0 ? 'Faturamento Bruto' : 'Total da Venda'}
                 </span>
                 <div className="text-lg font-extrabold text-slate-900 dark:text-white mt-1">
-                  {formatUSD(selectedSale.total_amount_usd)}
+                  {formatMoney(selectedSale.total_amount_usd)}
                 </div>
               </div>
               <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
@@ -744,7 +743,7 @@ export const SalesModule = ({
                 <div className={`text-lg font-extrabold mt-1 ${
                   selectedSale.balance_due_usd > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
                 }`}>
-                  {formatUSD(selectedSale.balance_due_usd || 0)}
+                  {formatMoney(selectedSale.balance_due_usd || 0)}
                 </div>
               </div>
               {selectedSale.returned_amount_usd > 0 && (
@@ -752,20 +751,20 @@ export const SalesModule = ({
                   <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60">
                     <span className="text-xs text-rose-600 dark:text-rose-300">Devolvido</span>
                     <div className="text-lg font-extrabold text-rose-600 dark:text-rose-400 mt-1">
-                      -{formatUSD(selectedSale.returned_amount_usd)}
+                      -{formatMoney(selectedSale.returned_amount_usd)}
                     </div>
                   </div>
                   <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60">
                     <span className="text-xs text-emerald-700 dark:text-emerald-300">Faturamento Líquido</span>
                     <div className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">
-                      {formatUSD(selectedSale.total_amount_usd - selectedSale.returned_amount_usd)}
+                      {formatMoney(selectedSale.total_amount_usd - selectedSale.returned_amount_usd)}
                     </div>
                   </div>
                 </>
               )}
               {selectedSale.credit_due_usd > 0 && (
                 <div className="col-span-2 p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 text-xs font-semibold text-amber-800 dark:text-amber-300">
-                  Crédito ao lojista pendente de tratamento: {formatUSD(selectedSale.credit_due_usd)}
+                  Crédito ao lojista pendente de tratamento: {formatMoney(selectedSale.credit_due_usd)}
                 </div>
               )}
             </div>
@@ -841,7 +840,7 @@ export const SalesModule = ({
                         {(ret.items || []).map((item, iIdx) => (
                           <div key={iIdx} className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center justify-between">
                             <span>{formatImei(item.imei, 'IMEI não informado')} — {item.model} {item.storage}</span>
-                            <span className="font-bold text-rose-500">-{formatUSD(item.original_sale_price_usd)}</span>
+                            <span className="font-bold text-rose-500">-{formatMoney(item.original_sale_price_usd)}</span>
                           </div>
                         ))}
                       </div>

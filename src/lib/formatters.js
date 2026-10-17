@@ -1,8 +1,9 @@
 // RISEMOBILE: Formatters and Calculations
 
+// Valor em dólar como referência ("US$ 3.308,33"); a interface mostra R$ via formatMoney
 export const formatUSD = (val) => {
   const num = Number(val) || 0;
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2,
@@ -19,6 +20,25 @@ export const formatBRL = (val) => {
     maximumFractionDigits: 2,
   }).format(num);
 };
+
+// Moeda do sistema: o banco guarda valores em US$ (*_usd) e a tela mostra/recebe R$
+// pela cotação do dia (atualizada pelo App a cada 15 min via setUsdToBrlRate).
+export const DEFAULT_USD_BRL_RATE = 5.48;
+let usdToBrlRate = DEFAULT_USD_BRL_RATE;
+
+export const setUsdToBrlRate = (rate) => {
+  const num = Number(rate);
+  if (Number.isFinite(num) && num > 0) usdToBrlRate = num;
+};
+export const getUsdToBrlRate = () => usdToBrlRate;
+export const usdToBrl = (usd) => (Number(usd) || 0) * usdToBrlRate;
+export const brlToUsd = (brl) => (Number(brl) || 0) / usdToBrlRate;
+
+// Valor em R$ arredondado a centavos (exportações para Excel)
+export const toBrlAmount = (usd) => Math.round(usdToBrl(usd) * 100) / 100;
+
+// Valor gravado em US$ exibido em R$ (padrão de toda a interface)
+export const formatMoney = (usd) => formatBRL(usdToBrl(usd));
 
 export const formatCurrency = (val, currency = 'USD') => {
   return currency === 'BRL' ? formatBRL(val) : formatUSD(val);

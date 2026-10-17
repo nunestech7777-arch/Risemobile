@@ -6,7 +6,7 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
-import { formatUSD, formatBRL, formatDate, getStatusBadge } from '../../lib/formatters';
+import { formatMoney, formatUSD, formatBRL, formatDate, getStatusBadge } from '../../lib/formatters';
 
 export const PaymentsModule = ({
   installments = [],
@@ -33,7 +33,7 @@ export const PaymentsModule = ({
 
   // Registrar Baixa de Parcela
   const handlePayInstallmentClick = async (inst) => {
-    if (window.confirm(`Confirmar recebimento da Parcela #${inst.installment_number} no valor de ${formatUSD(inst.amount_usd)}?`)) {
+    if (window.confirm(`Confirmar recebimento da Parcela #${inst.installment_number} no valor de ${formatMoney(inst.amount_usd)}?`)) {
       try {
         await onPayInstallment(inst.id, { method: 'PIX' });
         alert('Parcela baixada com sucesso!');
@@ -65,19 +65,19 @@ export const PaymentsModule = ({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="p-5 rounded-2xl bg-white dark:bg-[#0B1220]/85 dark:backdrop-blur-xl border border-slate-200 dark:border-white/12 text-slate-900 dark:text-white flex flex-col justify-between shadow-sm">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Saldo Total a Receber</span>
-          <div className="text-2xl sm:text-3xl font-extrabold mt-2 text-slate-900 dark:text-white">{formatUSD(totalReceivablesUSD)}</div>
-          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1">Equivalente a {formatBRL(totalReceivablesUSD * exchangeRate)}</span>
+          <div className="text-2xl sm:text-3xl font-extrabold mt-2 text-slate-900 dark:text-white">{formatMoney(totalReceivablesUSD)}</div>
+          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1">Base em dólar: {formatUSD(totalReceivablesUSD)}</span>
         </div>
 
         <div className="p-5 rounded-2xl bg-white dark:bg-[#1A0C14]/85 dark:backdrop-blur-xl border border-rose-200 dark:border-rose-500/30 text-rose-900 dark:text-rose-200 flex flex-col justify-between shadow-sm">
           <span className="text-xs font-bold uppercase tracking-wider text-rose-600 dark:text-rose-300">Parcelas Vencidas (Em Atraso)</span>
-          <div className="text-2xl sm:text-3xl font-extrabold text-rose-600 dark:text-rose-400 mt-2">{formatUSD(totalOverdueUSD)}</div>
+          <div className="text-2xl sm:text-3xl font-extrabold text-rose-600 dark:text-rose-400 mt-2">{formatMoney(totalOverdueUSD)}</div>
           <span className="text-xs font-semibold text-rose-600 dark:text-rose-300 mt-1">{installments.filter(i => i.status === 'Vencido').length} parcelas expiradas</span>
         </div>
 
         <div className="p-5 rounded-2xl bg-white dark:bg-[#081812]/85 dark:backdrop-blur-xl border border-emerald-200 dark:border-emerald-500/30 text-slate-900 dark:text-emerald-200 flex flex-col justify-between shadow-sm">
           <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">Total Já Liquidado</span>
-          <div className="text-2xl sm:text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-2">{formatUSD(totalPaidUSD)}</div>
+          <div className="text-2xl sm:text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-2">{formatMoney(totalPaidUSD)}</div>
           <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 mt-1">{installments.filter(i => i.status === 'Pago').length} parcelas pagas</span>
         </div>
       </div>
@@ -114,7 +114,7 @@ export const PaymentsModule = ({
             Nenhuma parcela encontrada para o filtro selecionado.
           </div>
         ) : (
-          <Table headers={['Pedido', 'Lojista', 'Parcela', 'Vencimento', 'Valor USD', 'Valor BRL', 'Status', 'Ações']}>
+          <Table headers={['Pedido', 'Lojista', 'Parcela', 'Vencimento', 'Valor', 'Base (US$)', 'Status', 'Ações']}>
             {filteredInstallments.map((inst) => {
               const statusStyle = getStatusBadge(inst.status);
               return (
@@ -132,10 +132,10 @@ export const PaymentsModule = ({
                     {formatDate(inst.due_date)}
                   </TableCell>
                   <TableCell className="font-extrabold text-slate-900 dark:text-white">
-                    {formatUSD(inst.amount_usd)}
+                    {formatMoney(inst.amount_usd)}
                   </TableCell>
                   <TableCell className="text-xs text-slate-400">
-                    {formatBRL(inst.amount_usd * exchangeRate)}
+                    {formatUSD(inst.amount_usd)}
                   </TableCell>
                   <TableCell>
                     <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusStyle.bg}`}>

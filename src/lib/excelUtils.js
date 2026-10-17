@@ -1,5 +1,18 @@
 // RISEMOBILE: Excel & CSV Import/Export Utilities
 import * as XLSX from 'xlsx';
+import { brlToUsd } from './formatters.js';
+
+// Valor de planilha: aceita número ou texto ("5.000,00", "R$ 5000", "430.5")
+const parseSheetAmount = (raw) => {
+  if (raw === '' || raw === null || raw === undefined) return NaN;
+  if (typeof raw === 'number') return raw;
+  let text = String(raw).replace(/[^0-9.,-]/g, '');
+  if (text.includes(',')) text = text.replace(/\./g, '').replace(',', '.');
+  return parseFloat(text);
+};
+
+// Colunas com "USD" / "US$" (modelo antigo) já estão em dólar; as demais são R$ e viram US$ pela cotação do dia
+const isUsdHeader = (key) => /\busd\b|us\$/i.test(key || '');
 
 /**
  * Exporta array de objetos para arquivo Excel (.xlsx) ou CSV (.csv)
@@ -30,8 +43,8 @@ export const downloadStockTemplate = () => {
       'Cor (opcional)': 'Meia-noite',
       'Saúde da Bateria % (opcional)': 95,
       'IMEI / Serial (opcional)': '354890123456789',
-      'Custo Unitário USD (opcional)': 350.00,
-      'Preço Sugerido USD (opcional)': 430.00
+      'Custo Unitário R$ (opcional)': 1900.00,
+      'Preço Sugerido R$ (opcional)': 2350.00
     },
     {
       'Modelo': 'iPhone 13',
@@ -40,8 +53,8 @@ export const downloadStockTemplate = () => {
       'Cor (opcional)': '',
       'Saúde da Bateria % (opcional)': '',
       'IMEI / Serial (opcional)': '',
-      'Custo Unitário USD (opcional)': 350.00,
-      'Preço Sugerido USD (opcional)': 430.00
+      'Custo Unitário R$ (opcional)': 1900.00,
+      'Preço Sugerido R$ (opcional)': 2350.00
     },
     {
       'Modelo': 'iPhone 14 Pro',
@@ -50,8 +63,8 @@ export const downloadStockTemplate = () => {
       'Cor (opcional)': '',
       'Saúde da Bateria % (opcional)': '',
       'IMEI / Serial (opcional)': '',
-      'Custo Unitário USD (opcional)': '',
-      'Preço Sugerido USD (opcional)': ''
+      'Custo Unitário R$ (opcional)': '',
+      'Preço Sugerido R$ (opcional)': ''
     }
   ];
 
@@ -65,8 +78,8 @@ export const downloadStockTemplate = () => {
     { wch: 16 }, // Cor
     { wch: 22 }, // Saúde da Bateria (%)
     { wch: 22 }, // IMEI / Serial
-    { wch: 22 }, // Custo Unitário (USD)
-    { wch: 22 }  // Preço Sugerido (USD)
+    { wch: 22 }, // Custo Unitário (R$)
+    { wch: 22 }  // Preço Sugerido (R$)
   ];
 
   const workbook = XLSX.utils.book_new();
@@ -92,14 +105,19 @@ export const parseStockExcelFile = async (file) => {
 
         const normalizedRows = rawJson.map((row, index) => {
           // Mapeamento flexível de chaves (case-insensitive e variações comuns)
+          const findKey = (keys) => Object.keys(row).find(key => {
+            const cleanKey = key.trim().toLowerCase();
+            return keys.some(k => cleanKey.includes(k.toLowerCase()));
+          });
           const findVal = (keys) => {
-            for (const key of Object.keys(row)) {
-              const cleanKey = key.trim().toLowerCase();
-              if (keys.some(k => cleanKey.includes(k.toLowerCase()))) {
-                return row[key];
-              }
-            }
-            return '';
+            const key = findKey(keys);
+            return key === undefined ? '' : row[key];
+          };
+          const toUsd = (keys) => {
+            const key = findKey(keys);
+            const amount = key === undefined ? NaN : parseSheetAmount(row[key]);
+            if (isNaN(amount)) return NaN;
+            return isUsdHeader(key) ? amount : Number(brlToUsd(amount).toFixed(2));
           };
 
           const model = String(findVal(['modelo', 'model']) || '').trim();
@@ -109,10 +127,10 @@ export const parseStockExcelFile = async (file) => {
           const rawBattery = findVal(['bateria', 'battery', 'saude', 'saúde']);
           const battery = String(rawBattery).trim() !== '' ? parseInt(rawBattery, 10) : NaN;
           const imei = String(findVal(['imei', 'serial', 'numero de serie', 'número de série']) || '').trim().replace(/[^a-zA-Z0-9]/g, '');
-          const rawCost = findVal(['custo', 'cost', 'unitario', 'unitário']);
-          const cost = rawCost !== '' ? parseFloat(String(rawCost).replace(',', '.')) : 0;
-          const rawPrice = findVal(['preco', 'preço', 'sugerido', 'venda', 'price']);
-          const price = rawPrice !== '' ? parseFloat(String(rawPrice).replace(',', '.')) : (cost ? cost * 1.25 : 0);
+          const costKeys = ['custo', 'cost', 'unitario', 'unitário'];
+          const priceKeys = ['preco', 'preço', 'sugerido', 'venda', 'price'];
+          const cost = findVal(costKeys) !== '' ? toUsd(costKeys) : 0;
+          const price = findVal(priceKeys) !== '' ? toUsd(priceKeys) : (cost ? cost * 1.25 : 0);
 
           return {
             rowNumber: index + 2, // 1-indexed considerando cabeçalho na linha 1

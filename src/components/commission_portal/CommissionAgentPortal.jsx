@@ -27,7 +27,7 @@ import { EmptyState } from '../ui/EmptyState';
 import { MetricCard } from '../ui/MetricCard';
 import { RiseMobileLogo } from '../common/RiseMobileLogo';
 import { ShaderBackground } from '../ui/adisyon-shader';
-import { formatUSD, formatDate } from '../../lib/formatters';
+import { formatMoney, formatUSD, formatDate } from '../../lib/formatters';
 import { DataService } from '../../lib/supabaseClient';
 
 export const CommissionAgentPortal = ({
@@ -166,7 +166,6 @@ export const CommissionAgentPortal = ({
   }, [user, periodRange]);
 
   const agentName = portalData?.agent?.name || user?.user_metadata?.name || 'Parceiro Comissionado';
-  const totalCommissionBRL = (portalData?.total_commission_usd || 0) * (exchangeRate || 5.20);
 
   return (
     <div className="min-h-screen bg-[#EEF2F6] dark:bg-[#030407] dark-ambient-canvas transition-colors duration-200 text-slate-900 dark:text-slate-100 flex flex-col relative pb-12">
@@ -338,8 +337,8 @@ export const CommissionAgentPortal = ({
             variant="default"
             title="Comissão Acumulada"
             subtitle={`Câmbio R$ ${exchangeRate.toFixed(2)}`}
-            value={isLoading ? '...' : formatUSD(portalData?.total_commission_usd || 0)}
-            secondaryValue={`≈ R$ ${totalCommissionBRL.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            value={isLoading ? '...' : formatMoney(portalData?.total_commission_usd || 0)}
+            secondaryValue={`Base em dólar: ${formatUSD(portalData?.total_commission_usd || 0)}`}
             badgeText="A Receber"
             badgeType="neutral"
           />
@@ -394,13 +393,13 @@ export const CommissionAgentPortal = ({
                         </div>
                       </TableCell>
                       <TableCell className="font-semibold text-slate-700 dark:text-slate-200">
-                        {formatUSD(r.commission_per_unit_usd)} / un
+                        {formatMoney(r.commission_per_unit_usd)} / un
                       </TableCell>
                       <TableCell className="font-extrabold text-purple-600 dark:text-purple-400">
                         {r.units_count} {r.units_count === 1 ? 'aparelho' : 'aparelhos'}
                       </TableCell>
                       <TableCell className="font-black text-slate-900 dark:text-white">
-                        {formatUSD(r.accumulated_commission_usd)}
+                        {formatMoney(r.accumulated_commission_usd)}
                       </TableCell>
                       <TableCell>
                         <Badge variant={r.status === 'Ativo' ? 'success' : 'neutral'} size="sm">
@@ -436,7 +435,7 @@ export const CommissionAgentPortal = ({
                     <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 dark:border-white/10 text-xs">
                       <div>
                         <span className="text-slate-400 block text-[10px]">Por Peça</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{formatUSD(r.commission_per_unit_usd)}</span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200">{formatMoney(r.commission_per_unit_usd)}</span>
                       </div>
                       <div>
                         <span className="text-slate-400 block text-[10px]">Peças</span>
@@ -444,7 +443,7 @@ export const CommissionAgentPortal = ({
                       </div>
                       <div>
                         <span className="text-slate-400 block text-[10px]">Total</span>
-                        <span className="font-black text-slate-900 dark:text-white">{formatUSD(r.accumulated_commission_usd)}</span>
+                        <span className="font-black text-slate-900 dark:text-white">{formatMoney(r.accumulated_commission_usd)}</span>
                       </div>
                     </div>
                   </div>
@@ -492,10 +491,10 @@ export const CommissionAgentPortal = ({
                         {ord.units_count} un
                       </TableCell>
                       <TableCell className="text-xs text-slate-600 dark:text-slate-300 font-semibold">
-                        {formatUSD(ord.commission_rate_usd)}
+                        {formatMoney(ord.commission_rate_usd)}
                       </TableCell>
                       <TableCell className="font-black text-emerald-600 dark:text-emerald-400">
-                        +{formatUSD(ord.commission_usd)}
+                        +{formatMoney(ord.commission_usd)}
                       </TableCell>
                       <TableCell>
                         <Badge size="sm" variant="success">
@@ -523,8 +522,8 @@ export const CommissionAgentPortal = ({
                       <span className="font-semibold text-purple-600 dark:text-purple-400">{ord.units_count} aparelhos</span>
                     </div>
                     <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-white/5">
-                      <span className="text-slate-400 text-[11px]">Comissão ({formatUSD(ord.commission_rate_usd)}/un)</span>
-                      <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">+{formatUSD(ord.commission_usd)}</span>
+                      <span className="text-slate-400 text-[11px]">Comissão ({formatMoney(ord.commission_rate_usd)}/un)</span>
+                      <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">+{formatMoney(ord.commission_usd)}</span>
                     </div>
                   </div>
                 ))}

@@ -36,7 +36,7 @@ import { Input, Select, CurrencyInput } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { IPhoneIcon } from '../common/IPhoneIcon';
 import { Modal, Drawer } from '../ui/Modal';
-import { formatUSD, formatDate } from '../../lib/formatters';
+import { formatMoney, formatDate } from '../../lib/formatters';
 
 export const CommissionsModule = ({
   orders = [],
@@ -698,7 +698,7 @@ export const CommissionsModule = ({
                 </div>
               </div>
               <div className="text-3xl font-black text-slate-900 dark:text-white mt-3">
-                {formatUSD(totalCommissionsAmount)}
+                {formatMoney(totalCommissionsAmount)}
               </div>
               <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-300 mt-1">
                 <span>Período:</span>
@@ -912,7 +912,7 @@ export const CommissionsModule = ({
                       </TableCell>
 
                       <TableCell className="font-bold text-slate-800 dark:text-slate-200">
-                        {formatUSD(ref.currentRate)} <span className="text-xs font-normal text-slate-400">/ peça</span>
+                        {formatMoney(ref.currentRate)} <span className="text-xs font-normal text-slate-400">/ peça</span>
                       </TableCell>
 
                       <TableCell className="font-bold text-slate-600 dark:text-slate-300">
@@ -920,7 +920,7 @@ export const CommissionsModule = ({
                       </TableCell>
 
                       <TableCell className="font-black text-slate-900 dark:text-white text-base">
-                        {formatUSD(ref.totalCommission)}
+                        {formatMoney(ref.totalCommission)}
                       </TableCell>
 
                       <TableCell onClick={(e) => e.stopPropagation()}>
@@ -1204,7 +1204,7 @@ export const CommissionsModule = ({
                 <div className="text-right">
                   <span className="text-xs text-slate-400">Comissão Cadastrada:</span>
                   <div className="text-lg font-black text-emerald-600 dark:text-emerald-400">
-                    {formatUSD(activeDetailData.currentRate)}/peça
+                    {formatMoney(activeDetailData.currentRate)}/peça
                   </div>
                 </div>
               </div>
@@ -1217,7 +1217,7 @@ export const CommissionsModule = ({
                 <div className="text-right">
                   <span className="text-slate-400">Comissão no Período:</span>
                   <div className="text-base font-black text-slate-900 dark:text-white mt-0.5">
-                    {formatUSD(activeDetailData.totalCommission)}
+                    {formatMoney(activeDetailData.totalCommission)}
                   </div>
                 </div>
               </div>
@@ -1259,10 +1259,10 @@ export const CommissionsModule = ({
                           {sale.units} un.
                         </TableCell>
                         <TableCell className="text-xs text-slate-500">
-                          ${sale.rateApplied.toFixed(2)}/un
+                          {formatMoney(sale.rateApplied)}/un
                         </TableCell>
                         <TableCell className="font-black text-emerald-600 dark:text-emerald-400">
-                          {formatUSD(sale.orderCommission)}
+                          {formatMoney(sale.orderCommission)}
                         </TableCell>
                         <TableCell className="text-xs text-slate-400">
                           {formatDate(sale.finalized_at)}
@@ -1315,10 +1315,9 @@ export const CommissionsModule = ({
           </div>
 
           <CurrencyInput
-            label="Comissão Fixa por Peça Comprada (USD)"
+            label="Comissão Fixa por Peça Comprada (R$)"
             value={formData.commission_per_unit_usd}
             onChange={(val) => setFormData({ ...formData, commission_per_unit_usd: val })}
-            currency="USD"
           />
 
           <Input

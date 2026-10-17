@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { brlToUsd, usdToBrl } from '../../lib/formatters';
 
 export const Input = ({
   label,
@@ -45,20 +46,54 @@ export const Input = ({
   );
 };
 
+// Valor monetário digitado em R$. O formulário continua recebendo e guardando US$ (value/onChange),
+// convertido pela cotação do dia; o texto digitado só é reescrito quando o valor muda por fora.
+const usdToBrlText = (usd) => {
+  if (usd === '' || usd === null || usd === undefined) return '';
+  const num = Number(usd);
+  if (!Number.isFinite(num)) return '';
+  return String(Math.round(usdToBrl(num) * 100) / 100);
+};
+
+const useBrlAmount = (value, onUsdChange) => {
+  const [text, setText] = useState(() => usdToBrlText(value));
+  const lastEmitted = useRef(value);
+
+  useEffect(() => {
+    if (value !== lastEmitted.current) {
+      lastEmitted.current = value;
+      setText(usdToBrlText(value));
+    }
+  }, [value]);
+
+  const handleChange = (e) => {
+    const raw = e.target.value.replace(/[^0-9.]/g, '');
+    setText(raw);
+    const usd = raw === '' ? '' : String(Number(brlToUsd(raw).toFixed(2)));
+    lastEmitted.current = usd;
+    onUsdChange?.(usd);
+  };
+
+  return [text, handleChange];
+};
+
+// Campo compacto (células de tabela): mesmo comportamento, sem rótulo nem ícone
+export const BrlAmountInput = ({ value, onChange, ...props }) => {
+  const [text, handleChange] = useBrlAmount(value, onChange);
+  return <input type="number" step="0.01" min="0" {...props} value={text} onChange={handleChange} />;
+};
+
 export const CurrencyInput = ({
   label,
   value,
   onChange,
-  currency = 'USD',
+  currency, // eslint-disable-line no-unused-vars -- a entrada é sempre em R$
   error,
   className = '',
   id,
   ...props
 }) => {
-  const handleChange = (e) => {
-    const raw = e.target.value.replace(/[^0-9.]/g, '');
-    onChange?.(raw);
-  };
+  const [text, handleChange] = useBrlAmount(value, onChange);
 
   return (
     <Input
@@ -67,15 +102,13 @@ export const CurrencyInput = ({
       type="number"
       step="0.01"
       min="0"
-      value={value}
+      value={text}
       onChange={handleChange}
       error={error}
       placeholder="0.00"
       className={className}
       icon={() => (
-        <span className="text-xs font-bold text-slate-500 dark:text-slate-300">
-          {currency === 'BRL' ? 'R$' : '$'}
-        </span>
+        <span className="text-xs font-bold text-slate-500 dark:text-slate-300">R$</span>
       )}
       {...props}
     />

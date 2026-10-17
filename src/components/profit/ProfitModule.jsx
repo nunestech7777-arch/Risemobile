@@ -21,7 +21,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Input } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
-import { formatUSD, formatDate } from '../../lib/formatters';
+import { formatMoney, toBrlAmount, formatDate } from '../../lib/formatters';
 import { exportDataToFile } from '../../lib/excelUtils';
 
 export const ProfitModule = ({
@@ -430,11 +430,11 @@ export const ProfitModule = ({
         'Nº Pedido': o.order_number,
         'Lojista': o.retailer_name,
         'Qtd Peças': o.allocated_devices?.length || 0,
-        'Faturamento Bruto (USD)': parseFloat(o.total_amount_usd) || 0,
-        'Devolvido (USD)': parseFloat(o.returned_amount_usd) || 0,
-        'Faturamento Líquido (USD)': val,
-        'Valor Recebido (USD)': paid,
-        'Saldo a Receber (USD)': parseFloat(o.balance_due_usd) || 0,
+        'Faturamento Bruto (R$)': toBrlAmount(parseFloat(o.total_amount_usd) || 0),
+        'Devolvido (R$)': toBrlAmount(parseFloat(o.returned_amount_usd) || 0),
+        'Faturamento Líquido (R$)': toBrlAmount(val),
+        'Valor Recebido (R$)': toBrlAmount(paid),
+        'Saldo a Receber (R$)': toBrlAmount(parseFloat(o.balance_due_usd) || 0),
         'Status': o.status,
         'Data Finalização': formatDate(o.finalized_at || o.created_at, true)
       };
@@ -573,7 +573,7 @@ export const ProfitModule = ({
           <div className="mt-5 flex items-end justify-between gap-3">
             <div>
               <div className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                {formatUSD(periodRevenueUSD)}
+                {formatMoney(periodRevenueUSD)}
               </div>
               <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-0.5">
                 {periodUnitsSold} {periodUnitsSold === 1 ? 'peça vendida' : 'peças vendidas'}
@@ -599,10 +599,10 @@ export const ProfitModule = ({
           <div className="mt-5 flex items-end justify-between gap-3">
             <div>
               <div className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                {formatUSD(todayRevenueUSD)}
+                {formatMoney(todayRevenueUSD)}
               </div>
               <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-0.5">
-                Ontem: {formatUSD(yesterdayRevenueUSD)}
+                Ontem: {formatMoney(yesterdayRevenueUSD)}
               </div>
             </div>
 
@@ -623,7 +623,7 @@ export const ProfitModule = ({
               </div>
               <div>
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white tracking-tight">Previsão até Fim do Mês</h4>
-                <p className="text-xs text-slate-500 dark:text-slate-300 font-medium">Ritmo: {formatUSD(monthlyProjection.dailyPace)}/dia</p>
+                <p className="text-xs text-slate-500 dark:text-slate-300 font-medium">Ritmo: {formatMoney(monthlyProjection.dailyPace)}/dia</p>
               </div>
             </div>
           </div>
@@ -631,7 +631,7 @@ export const ProfitModule = ({
           <div className="mt-5 flex items-end justify-between gap-3">
             <div>
               <div className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                {formatUSD(monthlyProjection.projectedTotalUSD)}
+                {formatMoney(monthlyProjection.projectedTotalUSD)}
               </div>
               <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-0.5">
                 {monthlyProjection.remainingDays} dias restantes
@@ -657,7 +657,7 @@ export const ProfitModule = ({
           <div className="mt-5 flex items-end justify-between gap-3">
             <div>
               <div className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                {formatUSD(stockPotential.totalPotentialUSD)}
+                {formatMoney(stockPotential.totalPotentialUSD)}
               </div>
               <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-0.5">
                 {stockPotential.availableUnitsCount} aparelhos elegíveis
@@ -678,7 +678,7 @@ export const ProfitModule = ({
                 Faturamento ao Longo do Tempo
               </span>
               <div className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mt-1">
-                {formatUSD(periodRevenueUSD)}
+                {formatMoney(periodRevenueUSD)}
               </div>
               <div className="flex items-center gap-2 mt-1 text-xs font-bold text-slate-800 dark:text-slate-200">
                 <ArrowUpRight className="w-3.5 h-3.5 text-slate-900 dark:text-emerald-400" />
@@ -786,7 +786,7 @@ export const ProfitModule = ({
               }}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-white dark:bg-slate-300"></span>
-              <span>{formatUSD(periodRevenueUSD)}</span>
+              <span>{formatMoney(periodRevenueUSD)}</span>
             </div>
           </div>
 
@@ -859,7 +859,7 @@ export const ProfitModule = ({
                       <tr className="border-b border-white/10 text-xs font-semibold text-slate-400 uppercase tracking-wider">
                         <th className="py-3 px-4 first:pl-2">Modelo & Armazenamento</th>
                         <th className="py-3 px-4">Peças Vendidas</th>
-                        <th className="py-3 px-4">Faturamento Total (USD)</th>
+                        <th className="py-3 px-4">Faturamento Total</th>
                         <th className="py-3 px-4 last:pr-2">Participação no Período</th>
                       </tr>
                     </thead>
@@ -875,7 +875,7 @@ export const ProfitModule = ({
                               {item.unitsSold} {item.unitsSold === 1 ? 'peça' : 'peças'}
                             </td>
                             <td className="py-3.5 px-4 font-extrabold text-white">
-                              {formatUSD(item.revenueUSD)}
+                              {formatMoney(item.revenueUSD)}
                             </td>
                             <td className="py-3.5 px-4 last:pr-2">
                               <div className="flex items-center gap-3">
@@ -912,7 +912,7 @@ export const ProfitModule = ({
                         <th className="py-3 px-4 first:pl-2">Lojista</th>
                         <th className="py-3 px-4">Vendas Finalizadas</th>
                         <th className="py-3 px-4">Peças Compradas</th>
-                        <th className="py-3 px-4">Faturamento Total (USD)</th>
+                        <th className="py-3 px-4">Faturamento Total</th>
                         <th className="py-3 px-4 last:pr-2">Participação</th>
                       </tr>
                     </thead>
@@ -931,7 +931,7 @@ export const ProfitModule = ({
                               {ret.unitsSold} {ret.unitsSold === 1 ? 'peça' : 'peças'}
                             </td>
                             <td className="py-3.5 px-4 font-extrabold text-white">
-                              {formatUSD(ret.revenueUSD)}
+                              {formatMoney(ret.revenueUSD)}
                             </td>
                             <td className="py-3.5 px-4 last:pr-2">
                               <div className="flex items-center gap-3">
@@ -968,7 +968,7 @@ export const ProfitModule = ({
                         <th className="py-3 px-4 first:pl-2">Pedido</th>
                         <th className="py-3 px-4">Lojista</th>
                         <th className="py-3 px-4">Qtd / Peças</th>
-                        <th className="py-3 px-4">Total USD</th>
+                        <th className="py-3 px-4">Total</th>
                         <th className="py-3 px-4">Status</th>
                         <th className="py-3 px-4 last:pr-2">Data</th>
                       </tr>
@@ -989,7 +989,7 @@ export const ProfitModule = ({
                               {o.allocated_devices?.length || 0} unidades
                             </td>
                             <td className="py-3.5 px-4 font-extrabold text-white">
-                              {formatUSD(val)}
+                              {formatMoney(val)}
                             </td>
                             <td className="py-3.5 px-4">
                               <span className="inline-flex px-2.5 py-1 rounded-md text-xs font-bold bg-white/15 text-white border border-white/20">

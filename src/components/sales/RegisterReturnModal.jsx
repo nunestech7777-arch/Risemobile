@@ -3,7 +3,7 @@ import { Undo2, AlertTriangle } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Input';
 import { Modal } from '../ui/Modal';
-import { formatUSD, formatImeiLabel } from '../../lib/formatters';
+import { formatMoney, formatImeiLabel } from '../../lib/formatters';
 import { findOrderItemForDevice } from '../../lib/saleAllocation';
 
 const RETURN_REASONS = [
@@ -124,7 +124,7 @@ export const RegisterReturnModal = ({
                     </div>
                   </div>
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {formatUSD(getDevicePrice(dev))}
+                    {formatMoney(getDevicePrice(dev))}
                   </span>
                 </label>
               );
@@ -164,11 +164,11 @@ export const RegisterReturnModal = ({
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
                 <span className="text-slate-500 dark:text-slate-400">Impacto no Faturamento:</span>
-                <div className="font-bold text-rose-600 dark:text-rose-400">-{formatUSD(impactRevenueUSD)}</div>
+                <div className="font-bold text-rose-600 dark:text-rose-400">-{formatMoney(impactRevenueUSD)}</div>
               </div>
               <div>
                 <span className="text-slate-500 dark:text-slate-400">Impacto na Comissão:</span>
-                <div className="font-bold text-rose-600 dark:text-rose-400">-{formatUSD(impactCommissionUSD)}</div>
+                <div className="font-bold text-rose-600 dark:text-rose-400">-{formatMoney(impactCommissionUSD)}</div>
               </div>
             </div>
             <p className="text-[11px] text-amber-700 dark:text-amber-400">

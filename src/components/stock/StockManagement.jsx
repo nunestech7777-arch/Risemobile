@@ -17,7 +17,7 @@ import { Table, TableRow, TableCell } from '../ui/Table';
 import { Modal } from '../ui/Modal';
 import { EmptyState } from '../ui/EmptyState';
 import { DeviceHistoryDrawer } from './DeviceHistoryDrawer';
-import { formatUSD, formatImei, formatColor, formatDate, getStatusBadge, getBatteryHealthBadge, getDeviceCompleteness } from '../../lib/formatters';
+import { formatMoney, toBrlAmount, formatImei, formatColor, formatDate, getStatusBadge, getBatteryHealthBadge, getDeviceCompleteness } from '../../lib/formatters';
 import { DELETE_REASON_OPTIONS, DEVICE_DELETE_BLOCKED_MESSAGE, buildDeletionReason, getDeviceDeleteBlock, getDevicesWithCommercialHistory, getStockGroupKey, isInCommercialStock } from '../../lib/deviceRules';
 import { exportDataToFile } from '../../lib/excelUtils';
 import { COLOR_OPTIONS } from '../../lib/deviceOptions';
@@ -154,7 +154,7 @@ export const StockManagement = ({
         'Cor': d.color || '',
         'Saúde Bateria (%)': d.battery_health ?? '',
         'IMEI': d.imei || '',
-        'Preço (USD)': d.suggested_price_usd || d.cost_price_usd || 0,
+        'Preço (R$)': toBrlAmount(d.suggested_price_usd || d.cost_price_usd || 0),
         'Status': d.status,
         'Cadastrado em': d.created_at
       };
@@ -341,7 +341,7 @@ export const StockManagement = ({
                     </span>
                   </TableCell>
                   <TableCell className="font-bold text-slate-900 dark:text-white">
-                    {group.price ? formatUSD(group.price) : '—'}
+                    {group.price ? formatMoney(group.price) : '—'}
                   </TableCell>
                   <TableCell>
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700">
@@ -480,7 +480,7 @@ export const StockManagement = ({
                       </span>
                     </TableCell>
                     <TableCell className="font-semibold text-slate-900 dark:text-white">
-                      {(dev.suggested_price_usd || dev.cost_price_usd) ? formatUSD(dev.suggested_price_usd || dev.cost_price_usd) : '—'}
+                      {(dev.suggested_price_usd || dev.cost_price_usd) ? formatMoney(dev.suggested_price_usd || dev.cost_price_usd) : '—'}
                     </TableCell>
                     <TableCell>
                       <span
@@ -574,7 +574,7 @@ export const StockManagement = ({
                       </span>
                     </TableCell>
                     <TableCell className="font-semibold text-slate-900 dark:text-white">
-                      {(dev.suggested_price_usd || dev.cost_price_usd) ? formatUSD(dev.suggested_price_usd || dev.cost_price_usd) : '—'}
+                      {(dev.suggested_price_usd || dev.cost_price_usd) ? formatMoney(dev.suggested_price_usd || dev.cost_price_usd) : '—'}
                     </TableCell>
                     <TableCell>
                       <span className="px-2.5 py-1 rounded-md text-xs font-bold border bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/60">
@@ -689,7 +689,7 @@ export const StockManagement = ({
                 </div>
                 <div>
                   <span className="text-slate-400">Preço:</span>{' '}
-                  <strong>{(deletingDevice.suggested_price_usd || deletingDevice.cost_price_usd) ? formatUSD(deletingDevice.suggested_price_usd || deletingDevice.cost_price_usd) : '—'}</strong>
+                  <strong>{(deletingDevice.suggested_price_usd || deletingDevice.cost_price_usd) ? formatMoney(deletingDevice.suggested_price_usd || deletingDevice.cost_price_usd) : '—'}</strong>
                 </div>
               </div>
             </div>

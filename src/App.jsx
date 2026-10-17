@@ -21,6 +21,18 @@ import { ShaderBackground } from './components/ui/adisyon-shader';
 
 import { DataService, AuthService } from './lib/supabaseClient';
 import { fetchUsdToBrlRate } from './lib/exchangeRateService';
+import { DEFAULT_USD_BRL_RATE, setUsdToBrlRate } from './lib/formatters';
+
+// Última cotação obtida da API: evita converter R$ <-> US$ pelo valor padrão se a API falhar ao abrir
+const RATE_STORAGE_KEY = 'risemobile_last_usd_brl_rate';
+const readStoredRate = () => {
+  try {
+    const rate = Number(localStorage.getItem(RATE_STORAGE_KEY));
+    return Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_USD_BRL_RATE;
+  } catch {
+    return DEFAULT_USD_BRL_RATE;
+  }
+};
 
 
 export function App() {
@@ -52,7 +64,9 @@ export function App() {
   const [retailerReferrals, setRetailerReferrals] = useState([]);
   const [commissionAgents, setCommissionAgents] = useState([]);
   const [settings, setSettings] = useState({});
-  const [exchangeRate, setExchangeRate] = useState(5.48);
+  const [exchangeRate, setExchangeRate] = useState(readStoredRate);
+  // Toda a interface mostra e recebe R$ convertendo por esta cotação (o banco continua em US$)
+  setUsdToBrlRate(exchangeRate);
   const [isRateLoading, setIsRateLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -62,6 +76,7 @@ export function App() {
     try {
       const rate = await fetchUsdToBrlRate();
       setExchangeRate(rate);
+      try { localStorage.setItem(RATE_STORAGE_KEY, String(rate)); } catch { /* armazenamento indisponível */ }
     } catch (err) {
       console.error('Erro ao atualizar taxa de câmbio:', err);
     } finally {

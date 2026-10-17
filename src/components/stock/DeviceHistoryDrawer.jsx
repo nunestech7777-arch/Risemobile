@@ -2,7 +2,7 @@ import React from 'react';
 import { Drawer } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { formatDate, formatUSD, formatImeiLabel, formatColor, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
+import { formatDate, formatMoney, formatImeiLabel, formatColor, getStatusBadge, getBatteryHealthBadge } from '../../lib/formatters';
 import { Clock, ShieldAlert, CheckCircle, ArrowRight, ArrowDownLeft, Tag, Layers } from 'lucide-react';
 
 export const DeviceHistoryDrawer = ({
@@ -49,12 +49,12 @@ export const DeviceHistoryDrawer = ({
               <p className="font-bold text-slate-800 dark:text-slate-100">{formatColor(device.color)}</p>
             </div>
             <div>
-              <span className="text-slate-400">Preço de Custo (USD):</span>
-              <p className="font-bold text-slate-800 dark:text-slate-100">{device.cost_price_usd ? formatUSD(device.cost_price_usd) : '—'}</p>
+              <span className="text-slate-400">Preço de Custo:</span>
+              <p className="font-bold text-slate-800 dark:text-slate-100">{device.cost_price_usd ? formatMoney(device.cost_price_usd) : '—'}</p>
             </div>
             <div>
-              <span className="text-slate-400">Preço Sugerido (USD):</span>
-              <p className="font-bold text-emerald-600 dark:text-emerald-400 font-bold">{device.suggested_price_usd ? formatUSD(device.suggested_price_usd) : '—'}</p>
+              <span className="text-slate-400">Preço Sugerido:</span>
+              <p className="font-bold text-emerald-600 dark:text-emerald-400 font-bold">{device.suggested_price_usd ? formatMoney(device.suggested_price_usd) : '—'}</p>
             </div>
           </div>
         </div>

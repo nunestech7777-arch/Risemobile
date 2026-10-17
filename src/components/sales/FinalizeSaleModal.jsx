@@ -3,7 +3,7 @@ import { CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input, Select, CurrencyInput } from '../ui/Input';
 import { Modal } from '../ui/Modal';
-import { formatUSD } from '../../lib/formatters';
+import { formatMoney } from '../../lib/formatters';
 
 // Modal única de finalização de venda: coleta pagamento/parcelamento e confirma
 // a venda no mesmo fluxo, sem redirecionar para uma tela separada.
@@ -35,7 +35,8 @@ export const FinalizeSaleModal = ({
   }, [order?.id, exchangeRate]);
 
   const totalPaidInFormUSD = paymentsList.reduce((sum, p) => sum + (parseFloat(p.amount_usd) || 0), 0);
-  const remainingToFinanceUSD = Math.max(0, (order?.total_amount_usd || 0) - totalPaidInFormUSD);
+  // Valores digitados em R$ viram US$ com frações de centavo: o saldo é sempre em centavos
+  const remainingToFinanceUSD = Math.max(0, Math.round(((order?.total_amount_usd || 0) - totalPaidInFormUSD) * 100) / 100);
 
   const handleGenerateInstallments = (count) => {
     const num = parseInt(count, 10);
@@ -67,7 +68,21 @@ export const FinalizeSaleModal = ({
     e.preventDefault();
     if (!order) return;
 
-    const validPayments = paymentsList.filter(p => (parseFloat(p.amount_usd) || 0) > 0);
+    const roundCents = (v) => Math.round(v * 100) / 100;
+    const validPayments = paymentsList
+      .filter(p => (parseFloat(p.amount_usd) || 0) > 0)
+      .map(p => ({ ...p, amount_usd: String(roundCents(parseFloat(p.amount_usd))) }));
+
+    // Quitação à vista digitada em R$: arredondamento da conversão não pode deixar 1 centavo em aberto
+    if (validPayments.length > 0 && customInstallments.length === 0) {
+      const total = roundCents(order.total_amount_usd || 0);
+      const paid = roundCents(validPayments.reduce((sum, p) => sum + parseFloat(p.amount_usd), 0));
+      const diff = roundCents(total - paid);
+      if (diff !== 0 && Math.abs(diff) <= 0.02) {
+        const last = validPayments[validPayments.length - 1];
+        last.amount_usd = String(roundCents(parseFloat(last.amount_usd) + diff));
+      }
+    }
 
     if (validPayments.length === 0 && customInstallments.length === 0) {
       setSubmitError('Informe ao menos um pagamento à vista ou gere as parcelas a prazo.');
@@ -101,16 +116,16 @@ export const FinalizeSaleModal = ({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/80 text-xs">
           <div>
             <span className="text-slate-400">Total do Pedido:</span>
-            <p className="text-lg font-black text-slate-900 dark:text-white mt-1">{formatUSD(order.total_amount_usd)}</p>
+            <p className="text-lg font-black text-slate-900 dark:text-white mt-1">{formatMoney(order.total_amount_usd)}</p>
           </div>
           <div>
             <span className="text-slate-400">Valor Pago à Vista:</span>
-            <p className="text-lg font-black text-emerald-600 mt-1">{formatUSD(totalPaidInFormUSD)}</p>
+            <p className="text-lg font-black text-emerald-600 mt-1">{formatMoney(totalPaidInFormUSD)}</p>
           </div>
           <div>
             <span className="text-slate-400">Saldo a Parcelar / Aberto:</span>
             <p className={`text-lg font-black mt-1 ${remainingToFinanceUSD > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
-              {formatUSD(remainingToFinanceUSD)}
+              {formatMoney(remainingToFinanceUSD)}
             </p>
           </div>
           <div>
@@ -141,14 +156,13 @@ export const FinalizeSaleModal = ({
             {paymentsList.map((payment, idx) => (
               <div key={payment.id || idx} className="grid grid-cols-1 sm:grid-cols-4 gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 items-end">
                 <CurrencyInput
-                  label="Valor (USD)"
+                  label="Valor (R$)"
                   value={payment.amount_usd}
                   onChange={(val) => {
                     const updated = [...paymentsList];
                     updated[idx].amount_usd = val;
                     setPaymentsList(updated);
                   }}
-                  currency="USD"
                 />
                 <Select
                   label="Método de Pagamento"
@@ -196,7 +210,7 @@ export const FinalizeSaleModal = ({
           <div>
             <div className="flex items-center justify-between mb-3">
               <div>
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Parcelamento do Saldo ({formatUSD(remainingToFinanceUSD)})</h4>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Parcelamento do Saldo ({formatMoney(remainingToFinanceUSD)})</h4>
                 <p className="text-xs text-slate-400">Gere o cronograma de vencimentos a prazo. O saldo restante vai para Contas a Receber.</p>
               </div>
 
@@ -224,14 +238,13 @@ export const FinalizeSaleModal = ({
                   <div key={inst.id || idx} className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 items-center text-xs">
                     <span className="font-bold">Parcela #{inst.number} de {customInstallments.length}</span>
                     <CurrencyInput
-                      label="Valor Parcela (USD)"
+                      label="Valor Parcela (R$)"
                       value={inst.amount_usd}
                       onChange={(val) => {
                         const updated = [...customInstallments];
                         updated[idx].amount_usd = val;
                         setCustomInstallments(updated);
                       }}
-                      currency="USD"
                     />
                     <Input
                       label="Data de Vencimento"

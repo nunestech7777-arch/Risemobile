@@ -22,7 +22,7 @@ import { Input, CurrencyInput } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { Modal, Drawer } from '../ui/Modal';
 import { EmptyState } from '../ui/EmptyState';
-import { formatUSD, formatDate, getStatusBadge } from '../../lib/formatters';
+import { formatMoney, formatDate, getStatusBadge } from '../../lib/formatters';
 
 export const RetailersModule = ({
   retailers = [],
@@ -204,12 +204,12 @@ export const RetailersModule = ({
                 <div className="mt-5 grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-white/[0.04] dark:backdrop-blur-sm border border-slate-100 dark:border-white/10 text-xs">
                   <div>
                     <span className="text-slate-500 dark:text-slate-300 font-medium">Total Comprado:</span>
-                    <p className="font-extrabold text-slate-900 dark:text-white mt-0.5">{formatUSD(rBought)}</p>
+                    <p className="font-extrabold text-slate-900 dark:text-white mt-0.5">{formatMoney(rBought)}</p>
                   </div>
                   <div>
                     <span className="text-slate-500 dark:text-slate-300 font-medium">Saldo Devedor:</span>
                     <p className="font-extrabold text-slate-900 dark:text-white mt-0.5">
-                      {formatUSD(rBalance)}
+                      {formatMoney(rBalance)}
                     </p>
                   </div>
                 </div>
@@ -277,13 +277,13 @@ export const RetailersModule = ({
             <div className="grid grid-cols-2 gap-3">
               <div className="p-4 rounded-2xl bg-[#EDE8F8] dark:bg-purple-950/40 dark:border dark:border-purple-500/20 text-slate-900 dark:text-purple-200">
                 <span className="text-xs font-semibold opacity-75">Total Comprado</span>
-                <p className="text-xl font-bold mt-1 text-slate-900 dark:text-white">{formatUSD(totalBoughtUSD)}</p>
+                <p className="text-xl font-bold mt-1 text-slate-900 dark:text-white">{formatMoney(totalBoughtUSD)}</p>
                 <p className="text-[11px] opacity-60 mt-0.5">{totalUnitsBought} aparelhos comprados</p>
               </div>
 
               <div className="p-4 rounded-2xl bg-[#FAF3D6] dark:bg-amber-950/40 dark:border dark:border-amber-500/20 text-slate-900 dark:text-amber-200">
                 <span className="text-xs font-semibold opacity-75">Saldo Devedor</span>
-                <p className="text-xl font-bold mt-1 text-rose-600 dark:text-rose-400">{formatUSD(balanceDueUSD)}</p>
+                <p className="text-xl font-bold mt-1 text-rose-600 dark:text-rose-400">{formatMoney(balanceDueUSD)}</p>
                 <p className="text-[11px] opacity-60 mt-0.5">{retailerInstallments.filter(i => i.status !== 'Pago').length} parcelas abertas</p>
               </div>
             </div>
@@ -313,11 +313,11 @@ export const RetailersModule = ({
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
                 <ShoppingBag className="w-4 h-4" /> Histórico de Pedidos ({retailerOrders.length})
               </h4>
-              <Table headers={['Pedido', 'Total USD', 'Status', 'Data']}>
+              <Table headers={['Pedido', 'Total', 'Status', 'Data']}>
                 {retailerOrders.map(o => (
                   <TableRow key={o.id}>
                     <TableCell className="font-bold">{o.order_number}</TableCell>
-                    <TableCell className="font-bold">{formatUSD(o.total_amount_usd)}</TableCell>
+                    <TableCell className="font-bold">{formatMoney(o.total_amount_usd)}</TableCell>
                     <TableCell>
                       <Badge size="sm">{o.status}</Badge>
                     </TableCell>

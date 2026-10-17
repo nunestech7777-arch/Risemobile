@@ -15,7 +15,7 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Table, TableRow, TableCell } from '../ui/Table';
-import { formatUSD, formatBRL, formatDate, formatImei, formatColor, formatBattery } from '../../lib/formatters';
+import { formatMoney, toBrlAmount, formatBRL, formatDate, formatImei, formatColor, formatBattery } from '../../lib/formatters';
 import { exportDataToFile } from '../../lib/excelUtils';
 
 export const ReportsModule = ({
@@ -44,8 +44,8 @@ export const ReportsModule = ({
         'Pedido': o.order_number,
         'Lojista': o.retailer_name,
         'Aparelhos': `${o.allocated_devices?.length || 0} un.`,
-        'Faturamento (USD)': o.total_amount_usd,
-        'Comissão (USD)': typeof o.total_commission_usd === 'number' ? o.total_commission_usd : 0,
+        'Faturamento (R$)': toBrlAmount(o.total_amount_usd),
+        'Comissão (R$)': toBrlAmount(typeof o.total_commission_usd === 'number' ? o.total_commission_usd : 0),
         'Data': formatDate(o.finalized_at || o.created_at)
       }));
     } else if (reportType === 'stock' || reportType === 'idleStock') {
@@ -58,8 +58,8 @@ export const ReportsModule = ({
           'Cor': d.color || '',
           'Bateria (%)': d.battery_health ?? '',
           'IMEI': d.imei || '',
-          'Custo (USD)': d.cost_price_usd,
-          'Preço Sugerido (USD)': d.suggested_price_usd,
+          'Custo (R$)': toBrlAmount(d.cost_price_usd),
+          'Preço Sugerido (R$)': toBrlAmount(d.suggested_price_usd),
           'Status': d.status,
           'Cadastrado em': d.created_at
         };
@@ -69,7 +69,7 @@ export const ReportsModule = ({
         'Pedido': i.order_number,
         'Lojista': i.retailer_name,
         'Parcela': i.installment_number,
-        'Valor (USD)': i.amount_usd,
+        'Valor (R$)': toBrlAmount(i.amount_usd),
         'Vencimento': i.due_date,
         'Status': i.status
       }));
@@ -78,7 +78,7 @@ export const ReportsModule = ({
         'Pedido': o.order_number,
         'Lojista': o.retailer_name,
         'Unidades': o.allocated_devices?.length || 0,
-        'Comissão Total (USD)': o.total_commission_usd,
+        'Comissão Total (R$)': toBrlAmount(o.total_commission_usd),
         'Data': o.finalized_at || o.created_at
       }));
     }
@@ -137,7 +137,7 @@ export const ReportsModule = ({
         {reportType === 'sales' && (
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">Relatório de Vendas Concluídas</h3>
-            <Table headers={['Pedido', 'Lojista', 'Aparelhos', 'Faturamento USD', 'Comissão USD', 'Data']}>
+            <Table headers={['Pedido', 'Lojista', 'Aparelhos', 'Faturamento', 'Comissão', 'Data']}>
               {completedOrders.map(o => {
                 const commissionVal = typeof o.total_commission_usd === 'number' ? o.total_commission_usd : 0;
                 return (
@@ -145,9 +145,9 @@ export const ReportsModule = ({
                     <TableCell className="font-extrabold text-slate-900 dark:text-white">{o.order_number}</TableCell>
                     <TableCell className="font-semibold">{o.retailer_name}</TableCell>
                     <TableCell className="text-slate-600 dark:text-slate-300 font-medium">{o.allocated_devices?.length || 0} un.</TableCell>
-                    <TableCell className="font-extrabold text-slate-900 dark:text-white">{formatUSD(o.total_amount_usd)}</TableCell>
+                    <TableCell className="font-extrabold text-slate-900 dark:text-white">{formatMoney(o.total_amount_usd)}</TableCell>
                     <TableCell className="font-bold text-sky-600 dark:text-sky-400">
-                      {commissionVal > 0 ? formatUSD(commissionVal) : '—'}
+                      {commissionVal > 0 ? formatMoney(commissionVal) : '—'}
                     </TableCell>
                     <TableCell className="text-xs text-slate-400">{formatDate(o.finalized_at || o.created_at)}</TableCell>
                   </TableRow>
@@ -160,7 +160,7 @@ export const ReportsModule = ({
         {reportType === 'idleStock' && (
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">Aparelhos em Estoque Mais Antigos (Giro Lento)</h3>
-            <Table headers={['Modelo', 'Capacidade', 'Cor', 'Bateria', 'IMEI', 'Custo USD', 'Dias em Estoque']}>
+            <Table headers={['Modelo', 'Capacidade', 'Cor', 'Bateria', 'IMEI', 'Custo', 'Dias em Estoque']}>
               {idleStock.slice(0, 10).map(d => {
                 const daysInStock = Math.floor((new Date() - new Date(d.created_at)) / (1000 * 60 * 60 * 24));
                 return (
@@ -170,7 +170,7 @@ export const ReportsModule = ({
                     <TableCell>{formatColor(d.color)}</TableCell>
                     <TableCell>{formatBattery(d.battery_health)}</TableCell>
                     <TableCell className="font-mono text-xs">{formatImei(d.imei)}</TableCell>
-                    <TableCell className="font-semibold">{formatUSD(d.cost_price_usd)}</TableCell>
+                    <TableCell className="font-semibold">{formatMoney(d.cost_price_usd)}</TableCell>
                     <TableCell>
                       <Badge variant="butter" size="sm">{daysInStock} dias</Badge>
                     </TableCell>
@@ -184,13 +184,13 @@ export const ReportsModule = ({
         {reportType === 'financial' && (
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">Relatório de Recebíveis & Vencimentos</h3>
-            <Table headers={['Pedido', 'Lojista', 'Parcela', 'Valor USD', 'Vencimento', 'Status']}>
+            <Table headers={['Pedido', 'Lojista', 'Parcela', 'Valor', 'Vencimento', 'Status']}>
               {installments.map(i => (
                 <TableRow key={i.id}>
                   <TableCell className="font-extrabold">{i.order_number}</TableCell>
                   <TableCell>{i.retailer_name}</TableCell>
                   <TableCell>#{i.installment_number}</TableCell>
-                  <TableCell className="font-extrabold">{formatUSD(i.amount_usd)}</TableCell>
+                  <TableCell className="font-extrabold">{formatMoney(i.amount_usd)}</TableCell>
                   <TableCell>{formatDate(i.due_date)}</TableCell>
                   <TableCell>
                     <Badge size="sm">{i.status}</Badge>
@@ -204,13 +204,13 @@ export const ReportsModule = ({
         {reportType === 'commissions' && (
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">Relatório de Comissões por Venda</h3>
-            <Table headers={['Pedido', 'Lojista', 'Unidades Negociadas', 'Comissão Devida USD', 'Data']}>
+            <Table headers={['Pedido', 'Lojista', 'Unidades Negociadas', 'Comissão Devida', 'Data']}>
               {completedOrders.map(o => (
                 <TableRow key={o.id}>
                   <TableCell className="font-extrabold">{o.order_number}</TableCell>
                   <TableCell>{o.retailer_name}</TableCell>
                   <TableCell>{o.allocated_devices?.length || 0} un.</TableCell>
-                  <TableCell className="font-extrabold text-sky-600">{formatUSD(o.total_commission_usd)}</TableCell>
+                  <TableCell className="font-extrabold text-sky-600">{formatMoney(o.total_commission_usd)}</TableCell>
                   <TableCell className="text-xs text-slate-400">{formatDate(o.finalized_at || o.created_at)}</TableCell>
                 </TableRow>
               ))}
@@ -221,7 +221,7 @@ export const ReportsModule = ({
         {reportType === 'stock' && (
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">Inventário Geral Disponível</h3>
-            <Table headers={['Modelo', 'Capacidade', 'Cor', 'Bateria', 'IMEI', 'Custo USD', 'Preço Sugerido USD']}>
+            <Table headers={['Modelo', 'Capacidade', 'Cor', 'Bateria', 'IMEI', 'Custo', 'Preço Sugerido']}>
               {availableDevices.map(d => (
                 <TableRow key={d.id}>
                   <TableCell className="font-extrabold">{d.model}</TableCell>
@@ -229,8 +229,8 @@ export const ReportsModule = ({
                   <TableCell>{formatColor(d.color)}</TableCell>
                   <TableCell>{formatBattery(d.battery_health)}</TableCell>
                   <TableCell className="font-mono text-xs">{formatImei(d.imei)}</TableCell>
-                  <TableCell className="font-semibold">{formatUSD(d.cost_price_usd)}</TableCell>
-                  <TableCell className="font-extrabold text-emerald-600">{formatUSD(d.suggested_price_usd)}</TableCell>
+                  <TableCell className="font-semibold">{formatMoney(d.cost_price_usd)}</TableCell>
+                  <TableCell className="font-extrabold text-emerald-600">{formatMoney(d.suggested_price_usd)}</TableCell>
                 </TableRow>
               ))}
             </Table>

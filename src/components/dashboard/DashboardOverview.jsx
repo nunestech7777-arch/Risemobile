@@ -8,7 +8,7 @@ import { MetricCard } from '../ui/MetricCard';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Table, TableRow, TableCell } from '../ui/Table';
-import { formatUSD, formatBRL, formatDate, formatImei, getStatusBadge } from '../../lib/formatters';
+import { formatMoney, formatBRL, formatDate, formatImei, getStatusBadge } from '../../lib/formatters';
 import { summarizeSalesPeriod } from '../../lib/salesPeriod';
 
 // Área útil do gráfico dentro do viewBox 0 0 500 120
@@ -118,10 +118,10 @@ export const DashboardOverview = ({
                 ) : (
                   <>
                     <div className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white mt-1">
-                      {formatUSD(period.revenue)}
+                      {formatMoney(period.revenue)}
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-xs font-bold text-slate-800 dark:text-slate-200">
-                      <span className="text-slate-500 dark:text-slate-300 font-normal">Lucro: {formatUSD(period.profit)}</span>
+                      <span className="text-slate-500 dark:text-slate-300 font-normal">Lucro: {formatMoney(period.profit)}</span>
                     </div>
                   </>
                 )}
@@ -212,8 +212,8 @@ export const DashboardOverview = ({
                   <span className="w-1.5 h-1.5 rounded-full bg-white dark:bg-slate-200 animate-pulse"></span>
                   <span>
                     {hoverIndex !== null
-                      ? `${activePoint.label}: ${formatUSD(activePoint.value)} · acum. ${formatUSD(activePoint.cumulative)}`
-                      : formatUSD(period.revenue)}
+                      ? `${activePoint.label}: ${formatMoney(activePoint.value)} · acum. ${formatMoney(activePoint.cumulative)}`
+                      : formatMoney(period.revenue)}
                   </span>
                 </div>
               </>
@@ -229,7 +229,7 @@ export const DashboardOverview = ({
             title="Estoque Disponível"
             subtitle={`${availableDevices.length} peças prontas`}
             value={`${availableDevices.length} un.`}
-            secondaryValue={`Custo: ${formatUSD(totalStockValueUSD)}`}
+            secondaryValue={`Custo: ${formatMoney(totalStockValueUSD)}`}
             badgeText={`${reservedDevices.length} reservadas`}
             badgeType="neutral"
             onOptionsClick={() => onNavigate('stock')}
@@ -240,7 +240,7 @@ export const DashboardOverview = ({
             variant="default"
             title="Lucro Líquido"
             subtitle="Margem de atacado"
-            value={formatUSD(totalProfitUSD)}
+            value={formatMoney(totalProfitUSD)}
             secondaryValue={`Margem média: ${profitMarginPct.toFixed(1)}%`}
             badgeType="neutral"
             onOptionsClick={() => onNavigate('commissions')}
@@ -251,7 +251,7 @@ export const DashboardOverview = ({
             variant="default"
             title="Contas a Receber"
             subtitle={`${installments.filter(i => i.status !== 'Pago').length} parcelas abertas`}
-            value={formatUSD(totalReceivablesUSD)}
+            value={formatMoney(totalReceivablesUSD)}
             secondaryValue={overdueInstallments.length > 0 ? `${overdueInstallments.length} em atraso` : 'Em dia'}
             badgeText={overdueInstallments.length > 0 ? 'Atenção' : 'Regular'}
             badgeType="neutral"
@@ -263,7 +263,7 @@ export const DashboardOverview = ({
             variant="default"
             title="Comissões Devidas"
             subtitle="Por unidade negociada"
-            value={formatUSD(totalCommissionsUSD)}
+            value={formatMoney(totalCommissionsUSD)}
             secondaryValue={`${retailers.length} lojistas ativos`}
             badgeText="Configurada"
             badgeType="neutral"
@@ -317,7 +317,7 @@ export const DashboardOverview = ({
                     <th className="py-3 px-4 first:pl-2">Pedido</th>
                     <th className="py-3 px-4">Lojista</th>
                     <th className="py-3 px-4">Qtd / Modelos</th>
-                    <th className="py-3 px-4">Total USD</th>
+                    <th className="py-3 px-4">Total</th>
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4 last:pr-2">Data</th>
                   </tr>
@@ -355,7 +355,7 @@ export const DashboardOverview = ({
                           </div>
                         </td>
                         <td className="py-3.5 px-4 font-extrabold text-white text-base">
-                          {formatUSD(order.total_amount_usd)}
+                          {formatMoney(order.total_amount_usd)}
                         </td>
                         <td className="py-3.5 px-4">
                           <span className={`inline-flex px-2.5 py-1 rounded-none text-xs font-semibold border ${badgeClass}`}>

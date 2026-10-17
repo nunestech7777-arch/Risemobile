@@ -17,10 +17,10 @@ import {
 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { Input, Select, CurrencyInput } from '../ui/Input';
+import { Input, Select, CurrencyInput, BrlAmountInput } from '../ui/Input';
 import { Table, TableRow, TableCell } from '../ui/Table';
 import { Modal } from '../ui/Modal';
-import { formatUSD, formatColor, formatBattery, getDeviceCompleteness } from '../../lib/formatters';
+import { formatMoney, formatColor, formatBattery, getDeviceCompleteness } from '../../lib/formatters';
 import { downloadStockTemplate, parseStockExcelFile } from '../../lib/excelUtils';
 import { COLOR_OPTIONS, IPHONE_MODELS } from '../../lib/deviceOptions';
 
@@ -496,7 +496,7 @@ export const StockEntryModule = ({
               <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
                 Lote <strong>{successBanner.batchCode}</strong> • {successBanner.totalItems ? `${successBanner.totalItems} configurações • ` : ''}
                 {successBanner.quantity} aparelhos cadastrados como <strong>Disponível</strong>{' '}
-                ({successBanner.totalCost > 0 ? `${formatUSD(successBanner.totalCost)} de custo total` : 'custo não informado'}).
+                ({successBanner.totalCost > 0 ? `${formatMoney(successBanner.totalCost)} de custo total` : 'custo não informado'}).
               </div>
             </div>
           </div>
@@ -619,16 +619,14 @@ export const StockEntryModule = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 mb-4 border-b border-slate-200/60 dark:border-slate-700/60">
                   <CurrencyInput
-                    label="Custo Unitário Padrão (USD) — opcional"
+                    label="Custo Unitário Padrão (R$) — opcional"
                     value={item.unit_cost_usd}
                     onChange={(val) => handleItemCostChange(item.id, val)}
-                    currency="USD"
                   />
                   <CurrencyInput
-                    label="Preço Sugerido de Venda (USD) — opcional"
+                    label="Preço Sugerido de Venda (R$) — opcional"
                     value={item.suggested_price_usd}
                     onChange={(val) => handleItemPriceChange(item.id, val)}
-                    currency="USD"
                   />
                 </div>
 
@@ -658,7 +656,7 @@ export const StockEntryModule = ({
 
                 {/* Desktop Table View */}
                 <div className="hidden md:block border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
-                  <Table headers={['#', 'IMEI / Serial (opcional)', 'Cor (opcional)', 'Bateria % (opcional)', 'Custo (USD)', 'Preço Sugerido (USD)', 'Dados']}>
+                  <Table headers={['#', 'IMEI / Serial (opcional)', 'Cor (opcional)', 'Bateria % (opcional)', 'Custo (R$)', 'Preço Sugerido (R$)', 'Dados']}>
                     {item.units.map((unit, idx) => {
                       const cleanImei = (unit.imei || '').trim().toLowerCase();
                       const isDbDuplicate = cleanImei && existingImeiSet.has(cleanImei);
@@ -729,25 +727,19 @@ export const StockEntryModule = ({
                           </TableCell>
 
                           <TableCell className="w-36">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              placeholder="Opcional"
+                            <BrlAmountInput
+                              placeholder="R$ opcional"
                               value={unit.cost_price_usd}
-                              onChange={(e) => handleUpdateUnit(item.id, idx, 'cost_price_usd', e.target.value)}
+                              onChange={(usd) => handleUpdateUnit(item.id, idx, 'cost_price_usd', usd)}
                               className="w-28 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
                             />
                           </TableCell>
 
                           <TableCell className="w-36">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              placeholder="Opcional"
+                            <BrlAmountInput
+                              placeholder="R$ opcional"
                               value={unit.suggested_price_usd}
-                              onChange={(e) => handleUpdateUnit(item.id, idx, 'suggested_price_usd', e.target.value)}
+                              onChange={(usd) => handleUpdateUnit(item.id, idx, 'suggested_price_usd', usd)}
                               className="w-28 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.07] border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white"
                             />
                           </TableCell>
@@ -828,13 +820,11 @@ export const StockEntryModule = ({
                             label="Custo individual (opcional)"
                             value={unit.cost_price_usd}
                             onChange={(val) => handleUpdateUnit(item.id, idx, 'cost_price_usd', val)}
-                            currency="USD"
                           />
                           <CurrencyInput
                             label="Preço sugerido (opcional)"
                             value={unit.suggested_price_usd}
                             onChange={(val) => handleUpdateUnit(item.id, idx, 'suggested_price_usd', val)}
-                            currency="USD"
                           />
                         </div>
                       </div>
@@ -885,7 +875,7 @@ export const StockEntryModule = ({
                   <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
                     <span className="text-[11px] font-semibold text-slate-400">Custo Total do Lote</span>
                     <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
-                      {batchTotalCost > 0 ? formatUSD(batchTotalCost) : '—'}
+                      {batchTotalCost > 0 ? formatMoney(batchTotalCost) : '—'}
                     </div>
                   </div>
                 </div>
@@ -901,7 +891,7 @@ export const StockEntryModule = ({
                   ))}
                   <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white pt-1">
                     <span>Preço Sugerido Total</span>
-                    <span>{batchTotalSuggestedPrice > 0 ? formatUSD(batchTotalSuggestedPrice) : '—'}</span>
+                    <span>{batchTotalSuggestedPrice > 0 ? formatMoney(batchTotalSuggestedPrice) : '—'}</span>
                   </div>
                   <p className="text-[11px] text-slate-400 pt-1">
                     Nenhum IMEI é exigido: cadastre por quantidade agora e complete IMEI, cor e bateria depois em Estoque → Aparelhos Individuais.
@@ -1047,7 +1037,7 @@ export const StockEntryModule = ({
 
               {/* Tabela de Revisão */}
               <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden max-h-96 overflow-y-auto">
-                <Table headers={['Linha', 'Modelo & Armazenamento', 'Grade', 'Cor', 'Bateria', 'IMEI', 'Custo (USD)', 'Status / Diagnóstico']}>
+                <Table headers={['Linha', 'Modelo & Armazenamento', 'Grade', 'Cor', 'Bateria', 'IMEI', 'Custo (R$)', 'Status / Diagnóstico']}>
                   {parsedRows.map((row, idx) => {
                     const validationItem = importValidation.validRows.find(r => r.rowNumber === row.rowNumber) ||
                                            importValidation.errorRows.find(r => r.rowNumber === row.rowNumber);
@@ -1076,7 +1066,7 @@ export const StockEntryModule = ({
                           {row.imei || <span className="font-sans font-normal text-slate-400">Não informado</span>}
                         </TableCell>
                         <TableCell className="font-semibold text-slate-900 dark:text-white">
-                          {row.cost_price_usd > 0 ? formatUSD(row.cost_price_usd) : '—'}
+                          {row.cost_price_usd > 0 ? formatMoney(row.cost_price_usd) : '—'}
                         </TableCell>
                         <TableCell>
                           {isValid ? (
